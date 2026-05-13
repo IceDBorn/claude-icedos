@@ -1,0 +1,8 @@
+[icedos.applications.claude-code.users.username]
+enabledPlugins = []
+
+[icedos.applications.claude-code.users.username.extraSettings]
+
+[icedos.applications.claude-code.users.username.statusLine]
+type = ""
+command = ""

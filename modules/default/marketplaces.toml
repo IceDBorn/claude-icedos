@@ -1,0 +1,5 @@
+[[icedos.applications.claude-code.users.username.marketplaces]]
+name = ""
+source = "" # "github" | "git"
+repo = ""   # used when source = "github"
+url = ""    # used when source = "git"
