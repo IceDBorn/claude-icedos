@@ -1,0 +1,8 @@
+[icedos.applications.claude-code.peon-ping.users.username]
+defaultPack = "peon"
+volume = 0.5
+desktopNotifications = true
+suppressSubagentComplete = false
+packs = ["peon"]
+
+[icedos.applications.claude-code.peon-ping.users.username.categories]
