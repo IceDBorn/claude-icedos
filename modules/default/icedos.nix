@@ -7,6 +7,7 @@
 
       inherit (icedosLib)
         mkAttrsOption
+        mkNumberOption
         mkStrListOption
         mkStrOption
         mkSubmoduleAttrsOption
@@ -40,6 +41,7 @@
         command = mkStrOption { default = mcpTemplate.command; };
         args = mkStrListOption { default = mcpTemplate.args; };
         env = mkAttrsOption { default = mcpTemplate.env; };
+        timeout = mkNumberOption { default = mcpTemplate.timeout; };
       };
 
       marketplaces = mkSubmoduleListOption { default = [ ]; } {
@@ -75,7 +77,8 @@
             value = {
               inherit (m) command args;
             }
-            // optionalAttrs (m.env != { }) { env = m.env; };
+            // optionalAttrs (m.env != { }) { env = m.env; }
+            // optionalAttrs (m.timeout > 0) { timeout = m.timeout; };
           };
 
           renderMarketplace = m: {
