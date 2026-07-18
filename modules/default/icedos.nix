@@ -17,6 +17,7 @@
       inherit ((fromTOML (readFile ./config.toml)).icedos.applications.claude-code.users.username)
         enabledPlugins
         extraSettings
+        skills
         statusLine
         ;
 
@@ -30,6 +31,8 @@
       enabledPlugins = mkStrListOption { default = enabledPlugins; };
 
       extraSettings = mkAttrsOption { default = extraSettings; };
+
+      skills = mkAttrsOption { default = skills; };
 
       statusLine = {
         type = mkStrOption { default = statusLine.type; };
@@ -67,6 +70,8 @@
           inherit (lib)
             filter
             listToAttrs
+            mapAttrs'
+            nameValuePair
             optionalAttrs
             ;
 
@@ -127,9 +132,14 @@
                 userCfg = claudeUsers.${config.home.username} or null;
               in
               lib.mkIf (userCfg != null) {
-                home.file.".claude/settings.json".source = pkgs.writeText "claude-settings.json" (
-                  builtins.toJSON (renderSettings userCfg)
-                );
+                home.file = {
+                  ".claude/settings.json".source = pkgs.writeText "claude-settings.json" (
+                    builtins.toJSON (renderSettings userCfg)
+                  );
+                }
+                // mapAttrs' (
+                  name: content: nameValuePair ".claude/skills/${name}/SKILL.md" { text = content; }
+                ) userCfg.skills;
 
                 home.activation.icedosClaudeJsonMcpServers =
                   let
