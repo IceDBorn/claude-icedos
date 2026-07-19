@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <!-- Seconds between reads of the local climit DB. The climit daemon is the
+         sole live poller (>=180s floor); this only re-reads stored samples, so a
+         short refresh is cheap and never touches the network. -->
+    <entry name="refreshSec" type="Int">
+      <default>30</default>
+      <min>5</min>
+    </entry>
+    <!-- Which windows appear on the compact (panel) face. Both on by default =
+         everything at once; untick to declutter the panel. The full popup always
+         shows both regardless. -->
+    <entry name="showFiveHour" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="showSevenDay" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- On: the popup lists every window `climit status` prints, including the
+         per-model weekly ones (week · Opus / week · Sonnet). Off: only 5-hour
+         and weekly. Independent of the compact-face ticks above. -->
+    <entry name="showAllWindowsInPopup" type="Bool">
+      <default>true</default>
+    </entry>
+  </group>
+</kcfg>

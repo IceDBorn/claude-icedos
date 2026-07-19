@@ -1,0 +1,18 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Id": "org.icedos.climit",
+    "Name": "climit",
+    "Description": "Claude usage limits (5h + weekly) and burn rate",
+    "Icon": "speedometer",
+    "Category": "System Information",
+    "Version": "0.1.0",
+    "License": "MIT",
+    "Authors": [
+      {
+        "Name": "IceDOS"
+      }
+    ]
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}
