@@ -1,0 +1,4 @@
+[icedos.applications.claude-code.climit.users.username]
+interval = 180
+alerts = true
+widget = true

@@ -1,0 +1,16 @@
+[project]
+name = "climit"
+version = "0.1.0"
+description = "Track Claude usage limits (5h session + weekly) and burn rate."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+climit = "climit.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["climit*"]
