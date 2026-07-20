@@ -77,6 +77,80 @@
 
           claudeUsers = config.icedos.applications.claude-code.users;
 
+          # Users with the apps peon-ping module enabled. Gate Claude Code hook
+          # registration on this so we consume apps/upstream peon-ping instead of
+          # re-declaring it here. Sound/pack config lives in the apps module
+          # (icedos.applications.peon-ping.users); we only register the hooks.
+          peonPingUsers = config.icedos.applications.peon-ping.users or { };
+
+          # peon.sh + hook-handle-*.sh are staged by the apps peon-ping module
+          # (~/.claude/hooks/peon-ping/, ~/.openpeon/scripts/); we just wire them up.
+          peonCmd = {
+            type = "command";
+            command = "$HOME/.claude/hooks/peon-ping/peon.sh";
+            timeout = 10;
+          };
+
+          peonCmdAsync = peonCmd // {
+            async = true;
+          };
+
+          syncEntry = {
+            matcher = "";
+            hooks = [ peonCmd ];
+          };
+
+          asyncEntry = {
+            matcher = "";
+            hooks = [ peonCmdAsync ];
+          };
+
+          # Which sounds actually play is controlled by the per-category map in
+          # icedos.applications.peon-ping.users.<u>.categories, not by this list —
+          # events silenced there stay registered so flipping a category back on
+          # needs no module edit. PreToolUse is deliberately absent: peon assigns
+          # it no category and writes no state, so registering it only spawns
+          # peon.sh once per tool call to refresh the tab title.
+          #
+          # Do not drop these even though their categories may be off:
+          #   UserPromptSubmit — records the turn start that silentWindowSeconds reads
+          #   SessionStart     — seeds session state; the category gate runs later
+          #   SessionEnd       — prunes the per-session state maps
+          peonHooks = {
+            SessionStart = [ syncEntry ];
+            SessionEnd = [ asyncEntry ];
+            SubagentStart = [ asyncEntry ];
+            SubagentStop = [ asyncEntry ];
+            Stop = [ asyncEntry ];
+            Notification = [ asyncEntry ];
+            PermissionRequest = [ asyncEntry ];
+            PostToolUseFailure = [
+              {
+                matcher = "Bash";
+                hooks = [ peonCmdAsync ];
+              }
+            ];
+            PreCompact = [ asyncEntry ];
+            UserPromptSubmit = [
+              asyncEntry
+              {
+                matcher = "";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "bash $HOME/.openpeon/scripts/hook-handle-use.sh";
+                    timeout = 5;
+                  }
+                  {
+                    type = "command";
+                    command = "bash $HOME/.openpeon/scripts/hook-handle-rename.sh";
+                    timeout = 5;
+                  }
+                ];
+              }
+            ];
+          };
+
           renderMcp = m: {
             name = m.name;
             value = {
@@ -130,11 +204,19 @@
 
               let
                 userCfg = claudeUsers.${config.home.username} or null;
+
+                # Merge peon-ping Claude Code hooks in when the apps peon-ping
+                # module is enabled for this user (user extraSettings.hooks win).
+                peonEnabled = builtins.hasAttr config.home.username peonPingUsers;
+                rendered = renderSettings userCfg;
+                finalSettings = rendered // optionalAttrs peonEnabled {
+                  hooks = peonHooks // (rendered.hooks or { });
+                };
               in
               lib.mkIf (userCfg != null) {
                 home.file = {
                   ".claude/settings.json".source = pkgs.writeText "claude-settings.json" (
-                    builtins.toJSON (renderSettings userCfg)
+                    builtins.toJSON finalSettings
                   );
                 }
                 // mapAttrs' (
