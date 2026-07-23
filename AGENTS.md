@@ -19,17 +19,24 @@ Claude Code / Claude-specific integration modules for IceDOS — namespaced unde
 `icedos.applications.claude-code.*`.
 
 ## Layout
-`modules/{default,peon-ping}/{icedos.nix,config.toml}`; `flake.nix` exposes them via
+`modules/{climit,default}/{icedos.nix,config.toml}`; `flake.nix` exposes them via
 `icedosLib.scanModules { path = ./modules; filename = "icedos.nix"; }`.
 
 ## Module shape here
-Standard IceDOS module. Modules here may declare external `inputs` (e.g. `peon-ping`
-pins `github:PeonPing/peon-ping` with `inputs.nixpkgs.follows = "nixpkgs"`).
+Standard IceDOS module. Modules here may declare external `inputs`.
 
 ## Test a change to this repo
 In the config root's `config.toml`, point this repo's `overrideUrl` at your local
 checkout (`path:/abs/path/to/claude-icedos`), then `icedos rebuild --build` (no activation).
 
-## Notable modules / gotchas
-- `peon-ping` — Warcraft-peon-style audio notifications for agent events (per-user
-  submodule config).
+## Per-user config
+The claude-code per-user submodule is `icedos.applications.claude-code.users.<name>`
+(declared in `default`, materialised there with `genDefaults` — see core's *Per-user
+(`users`) options*). Sub-features **nest** under it rather than owning a `.users` tree:
+- `default` — `enabledPlugins`, `extraSettings`, `skills`, `statusLine`, `mcpServers`,
+  `marketplaces`.
+- `climit` — `…users.<name>.climit` (`interval`, `alerts`, `widget`); the module adds
+  only the nested submodule + its daemon/plasmoid, no `.users` of its own.
+- `peonPing` — `…users.<name>.peonPing`, contributed by the **apps** repo's `peon-ping`
+  module (not this repo). `default` detects it via `userCfg ? peonPing` to wire the
+  Claude Code hooks; the audio integration itself lives in apps.

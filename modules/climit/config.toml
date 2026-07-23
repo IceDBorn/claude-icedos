@@ -1,4 +1,4 @@
-[icedos.applications.claude-code.climit.users.username]
+[icedos.applications.claude-code.users.username.climit]
 interval = 180
 alerts = true
 widget = true

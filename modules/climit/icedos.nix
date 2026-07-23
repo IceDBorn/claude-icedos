@@ -1,7 +1,11 @@
 { icedosLib, lib, ... }:
 
 {
-  options.icedos.applications.claude-code.climit.users =
+  # Contributes a nested `climit` submodule to the claude-code per-user option
+  # declared in ../default. The module system merges these submodule option sets,
+  # so climit config lives at `icedos.applications.claude-code.users.<name>.climit`
+  # and materialises via ../default's `genDefaults` — no separate `.users` tree.
+  options.icedos.applications.claude-code.users =
     let
       inherit (lib) readFile;
 
@@ -11,16 +15,18 @@
         mkSubmoduleAttrsOption
         ;
 
-      inherit ((fromTOML (readFile ./config.toml)).icedos.applications.claude-code.climit.users.username)
+      inherit ((fromTOML (readFile ./config.toml)).icedos.applications.claude-code.users.username.climit)
         interval
         alerts
         widget
         ;
     in
     mkSubmoduleAttrsOption { default = { }; } {
-      interval = mkNumberOption { default = interval; };
-      alerts = mkBoolOption { default = alerts; };
-      widget = mkBoolOption { default = widget; };
+      climit = {
+        interval = mkNumberOption { default = interval; };
+        alerts = mkBoolOption { default = alerts; };
+        widget = mkBoolOption { default = widget; };
+      };
     };
 
   outputs.nixosModules =
@@ -35,7 +41,7 @@
         }:
 
         let
-          climitUsers = config.icedos.applications.claude-code.climit.users;
+          claudeUsers = config.icedos.applications.claude-code.users;
 
           climitPkg = pkgs.python3Packages.buildPythonApplication {
             pname = "climit";
@@ -80,7 +86,7 @@
           };
         in
         {
-          icedos.system.toolset.commands = lib.mkIf (climitUsers != { }) [
+          icedos.system.toolset.commands = lib.mkIf (claudeUsers != { }) [
             {
               command = "claude";
               help = "Claude Code tooling";
@@ -100,7 +106,7 @@
               { config, lib, ... }:
 
               let
-                userCfg = climitUsers.${config.home.username} or null;
+                userCfg = claudeUsers.${config.home.username}.climit or null;
               in
               lib.mkIf (userCfg != null) {
                 # Refuse a poll interval below the endpoint's rate-limit floor.

@@ -77,12 +77,6 @@
 
           claudeUsers = config.icedos.applications.claude-code.users;
 
-          # Users with the apps peon-ping module enabled. Gate Claude Code hook
-          # registration on this so we consume apps/upstream peon-ping instead of
-          # re-declaring it here. Sound/pack config lives in the apps module
-          # (icedos.applications.peon-ping.users); we only register the hooks.
-          peonPingUsers = config.icedos.applications.peon-ping.users or { };
-
           # peon.sh + hook-handle-*.sh are staged by the apps peon-ping module
           # (~/.claude/hooks/peon-ping/, ~/.openpeon/scripts/); we just wire them up.
           peonCmd = {
@@ -188,6 +182,10 @@
             userCfg: listToAttrs (map renderMcp (filter (m: m.name != "") userCfg.mcpServers));
         in
         {
+          icedos.applications.claude-code.users = icedosLib.users.genDefaults {
+            inherit (config.icedos) users;
+          };
+
           home-manager.sharedModules = [
             (
               { config, lib, ... }:
@@ -196,8 +194,10 @@
                 userCfg = claudeUsers.${config.home.username} or null;
 
                 # Merge peon-ping Claude Code hooks in when the apps peon-ping
-                # module is enabled for this user (user extraSettings.hooks win).
-                peonEnabled = builtins.hasAttr config.home.username peonPingUsers;
+                # module is loaded — it contributes the nested `peonPing` submodule
+                # to the claude-code user, so its presence signals integration.
+                # (user extraSettings.hooks win.)
+                peonEnabled = userCfg != null && userCfg ? peonPing;
                 rendered = renderSettings userCfg;
                 finalSettings = rendered // optionalAttrs peonEnabled {
                   hooks = peonHooks // (rendered.hooks or { });
