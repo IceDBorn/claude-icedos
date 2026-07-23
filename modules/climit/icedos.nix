@@ -2,9 +2,12 @@
 
 {
   # Contributes a nested `climit` submodule to the claude-code per-user option
-  # declared in ../default. The module system merges these submodule option sets,
-  # so climit config lives at `icedos.applications.claude-code.users.<name>.climit`
-  # and materialises via ../default's `genDefaults` — no separate `.users` tree.
+  # declared in ../default, so climit config lives at
+  # `icedos.applications.claude-code.users.<name>.climit` and materialises via
+  # ../default's `genDefaults`. NOTE: this child declaration MUST omit `default`
+  # — only the always-loaded owner (../default) sets `default = {}`. Two
+  # `attrsOf submodule` declarations both carrying a default do NOT type-merge
+  # (nixpkgs throws "already declared"); with one default they merge cleanly.
   options.icedos.applications.claude-code.users =
     let
       inherit (lib) readFile;
@@ -21,7 +24,7 @@
         widget
         ;
     in
-    mkSubmoduleAttrsOption { default = { }; } {
+    mkSubmoduleAttrsOption { } {
       climit = {
         interval = mkNumberOption { default = interval; };
         alerts = mkBoolOption { default = alerts; };

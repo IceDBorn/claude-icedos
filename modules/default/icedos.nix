@@ -18,7 +18,7 @@
         enabledPlugins
         extraSettings
         skills
-        statusLine
+        status-line
         ;
 
       mcpTemplate = head (fromTOML (readFile ./mcp-servers.toml))
@@ -34,9 +34,9 @@
 
       skills = mkAttrsOption { default = skills; };
 
-      statusLine = {
-        type = mkStrOption { default = statusLine.type; };
-        command = mkStrOption { default = statusLine.command; };
+      status-line = {
+        type = mkStrOption { default = status-line.type; };
+        command = mkStrOption { default = status-line.command; };
       };
 
       mcpServers = mkSubmoduleListOption { default = [ ]; } {
@@ -76,6 +76,10 @@
             ;
 
           claudeUsers = config.icedos.applications.claude-code.users;
+
+          # Standalone apps `peon-ping` module (icedos.applications.peon-ping.users);
+          # we only consume it to register the Claude Code hooks when a user has it.
+          peonPingUsers = config.icedos.applications.peon-ping.users or { };
 
           # peon.sh + hook-handle-*.sh are staged by the apps peon-ping module
           # (~/.claude/hooks/peon-ping/, ~/.openpeon/scripts/); we just wire them up.
@@ -171,9 +175,9 @@
                 map renderMarketplace (filter (m: m.name != "") userCfg.marketplaces)
               );
             }
-            // optionalAttrs (userCfg.statusLine.command != "") {
+            // optionalAttrs (userCfg.status-line.command != "") {
               statusLine = {
-                inherit (userCfg.statusLine) type command;
+                inherit (userCfg.status-line) type command;
               };
             }
             // userCfg.extraSettings;
@@ -194,14 +198,14 @@
                 userCfg = claudeUsers.${config.home.username} or null;
 
                 # Merge peon-ping Claude Code hooks in when the apps peon-ping
-                # module is loaded — it contributes the nested `peonPing` submodule
-                # to the claude-code user, so its presence signals integration.
-                # (user extraSettings.hooks win.)
-                peonEnabled = userCfg != null && userCfg ? peonPing;
+                # module is enabled for this user (user extraSettings.hooks win).
+                peonEnabled = builtins.hasAttr config.home.username peonPingUsers;
                 rendered = renderSettings userCfg;
-                finalSettings = rendered // optionalAttrs peonEnabled {
-                  hooks = peonHooks // (rendered.hooks or { });
-                };
+                finalSettings =
+                  rendered
+                  // optionalAttrs peonEnabled {
+                    hooks = peonHooks // (rendered.hooks or { });
+                  };
               in
               lib.mkIf (userCfg != null) {
                 home.file = {

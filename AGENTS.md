@@ -33,10 +33,10 @@ checkout (`path:/abs/path/to/claude-icedos`), then `icedos rebuild --build` (no 
 The claude-code per-user submodule is `icedos.applications.claude-code.users.<name>`
 (declared in `default`, materialised there with `genDefaults` — see core's *Per-user
 (`users`) options*). Sub-features **nest** under it rather than owning a `.users` tree:
-- `default` — `enabledPlugins`, `extraSettings`, `skills`, `statusLine`, `mcpServers`,
+- `default` — `enabledPlugins`, `extraSettings`, `skills`, `status-line`, `mcpServers`,
   `marketplaces`.
 - `climit` — `…users.<name>.climit` (`interval`, `alerts`, `widget`); the module adds
   only the nested submodule + its daemon/plasmoid, no `.users` of its own.
-- `peonPing` — `…users.<name>.peonPing`, contributed by the **apps** repo's `peon-ping`
-  module (not this repo). `default` detects it via `userCfg ? peonPing` to wire the
-  Claude Code hooks; the audio integration itself lives in apps.
+- `peon-ping` — a **standalone apps module** (`icedos.applications.peon-ping.users`, not part
+  of claude-code). `default` *consumes* it (`hasAttr user (…applications.peon-ping.users)`) to
+  wire the Claude Code hooks; the audio integration itself lives in the apps repo.
