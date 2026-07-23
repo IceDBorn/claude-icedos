@@ -4,6 +4,6 @@ enabledPlugins = []
 [icedos.applications.claude-code.users.username.skills]
 [icedos.applications.claude-code.users.username.extraSettings]
 
-[icedos.applications.claude-code.users.username.statusLine]
+[icedos.applications.claude-code.users.username.status-line]
 type = ""
 command = ""
