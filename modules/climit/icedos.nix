@@ -10,7 +10,7 @@
   # (nixpkgs throws "already declared"); with one default they merge cleanly.
   options.icedos.applications.claude-code.users =
     let
-      inherit (lib) readFile;
+      inherit (lib) importTOML;
 
       inherit (icedosLib)
         mkBoolOption
@@ -18,7 +18,7 @@
         mkSubmoduleAttrsOption
         ;
 
-      inherit ((fromTOML (readFile ./config.toml)).icedos.applications.claude-code.users.username.climit)
+      inherit ((importTOML ./config.toml).icedos.applications.claude-code.users.username.climit)
         interval
         alerts
         widget

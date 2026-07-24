@@ -3,7 +3,7 @@
 {
   options.icedos.applications.claude-code.users =
     let
-      inherit (lib) head readFile;
+      inherit (lib) head importTOML;
 
       inherit (icedosLib)
         mkAttrsOption
@@ -14,17 +14,17 @@
         mkSubmoduleListOption
         ;
 
-      inherit ((fromTOML (readFile ./config.toml)).icedos.applications.claude-code.users.username)
+      inherit ((importTOML ./config.toml).icedos.applications.claude-code.users.username)
         enabledPlugins
         extraSettings
         skills
         status-line
         ;
 
-      mcpTemplate = head (fromTOML (readFile ./mcp-servers.toml))
+      mcpTemplate = head (importTOML ./mcp-servers.toml)
         .icedos.applications.claude-code.users.username.mcpServers;
 
-      marketplaceTemplate = head (fromTOML (readFile ./marketplaces.toml))
+      marketplaceTemplate = head (importTOML ./marketplaces.toml)
         .icedos.applications.claude-code.users.username.marketplaces;
     in
     mkSubmoduleAttrsOption { default = { }; } {
