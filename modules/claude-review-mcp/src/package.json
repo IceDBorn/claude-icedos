@@ -1,0 +1,23 @@
+{
+  "name": "claude-review-mcp",
+  "version": "1.0.0",
+  "description": "Read-only MCP server exposing Claude Code (headless, subscription-billed) as a code reviewer for another model.",
+  "bin": {
+    "claude-review-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.20",
+    "typescript": "^5.7.3"
+  }
+}

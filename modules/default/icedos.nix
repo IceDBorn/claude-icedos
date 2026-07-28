@@ -6,7 +6,7 @@
       inherit (lib) head importTOML;
 
       inherit (icedosLib)
-        mkAttrsOption
+        mkAttrsOfOption
         mkNumberOption
         mkStrListOption
         mkStrOption
@@ -30,9 +30,9 @@
     mkSubmoduleAttrsOption { default = { }; } {
       enabledPlugins = mkStrListOption { default = enabledPlugins; };
 
-      extraSettings = mkAttrsOption { default = extraSettings; };
+      extraSettings = mkAttrsOfOption { default = extraSettings; } lib.types.anything;
 
-      skills = mkAttrsOption { default = skills; };
+      skills = mkAttrsOfOption { default = skills; } lib.types.anything;
 
       status-line = {
         type = mkStrOption { default = status-line.type; };
@@ -43,7 +43,7 @@
         name = mkStrOption { default = mcpTemplate.name; };
         command = mkStrOption { default = mcpTemplate.command; };
         args = mkStrListOption { default = mcpTemplate.args; };
-        env = mkAttrsOption { default = mcpTemplate.env; };
+        env = mkAttrsOfOption { default = mcpTemplate.env; } lib.types.anything;
         timeout = mkNumberOption { default = mcpTemplate.timeout; };
       };
 

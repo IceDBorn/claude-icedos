@@ -1,0 +1,97 @@
+[icedos.applications.claude-code.users.username.reviewMcp]
+allowedRoots = []
+# Roots the image-analyze tool may read images from. Empty = fall back to
+# allowedRoots (the server does so at runtime). Keep screenshots here rather than
+# widening allowedRoots: widening the repo roots also widens the `work` tier's
+# Bash/Write reach.
+allowedImageRoots = []
+# Byte cap for images handed to claude_analyze_image. A local resource guard —
+# oversized images are refused before anything is read into memory or sent.
+maxImageBytes = 3900000
+maxCallsPerHour = 20
+effort = "high"
+timeout = 900
+maxDiffBytes = 200000
+provideClaudeCode = true
+scratchDir = "~/.cache/claude-review-mcp/scratch"
+allowNetwork = false
+# Permit the `fable` model. Off: the tools offer only `opus`/`sonnet`, and model-override
+# env vars are stripped from the claude child so an alias cannot resolve elsewhere.
+allowFable = false
+
+# Toolchain prepended to the server's PATH, so the `work` tier can run the commands in
+# `bashAllow` regardless of how thin the MCP client's own PATH is. The Nix store paths
+# are searched before the inherited PATH. Names are nixpkgs attributes.
+extraPackages = [
+  # Load-bearing: Claude Code's Bash tool needs `bash` on PATH, and NixOS `/bin` ships
+  # only `sh`. Without this the tool reports itself blocked and every check comes back
+  # `inconclusive`.
+  "bash",
+  "nodejs",
+  "gnumake",
+  "python3",
+  "coreutils",
+  "findutils",
+  "gnugrep",
+  "gnused",
+  "gawk",
+  "ripgrep",
+  "jq",
+  "file",
+  "which",
+]
+
+# Command prefixes claude_verify and claude_help may run, as Claude Code permission
+# rule bodies (prefix match, `*` wildcard). Empty disables both tools; the read-tier
+# tools (claude_review_plan, claude_review, claude_ask, claude_analyze_image) never
+# run commands regardless.
+#
+# Not a security boundary once a test runner is on the list — the tests are code the
+# caller wrote. It stops accidents and forces an attacker through another step; the
+# boundaries that hold are the network deny-list, the absence of MCP servers, and
+# allowedRoots.
+bashAllow = [
+  # Test, build, typecheck
+  "npm test *",
+  "npm run *",
+  "npx *",
+  "pnpm *",
+  "yarn *",
+  "pytest *",
+  "python -m pytest *",
+  "cargo test *",
+  "cargo check *",
+  "go test *",
+  "composer *",
+  "vendor/bin/*",
+  "make *",
+  # Git, read-only
+  "git status *",
+  "git diff *",
+  "git log *",
+  "git show *",
+  "git branch *",
+  "git stash list *",
+  # Services and containers
+  "ddev *",
+  "docker ps *",
+  "docker logs *",
+  "podman ps *",
+  "podman logs *",
+  "systemctl status *",
+  "systemctl --user status *",
+  "journalctl *",
+  # Inspection
+  "ls *",
+  "cat *",
+  "head *",
+  "tail *",
+  "wc *",
+  "find *",
+  "rg *",
+  "jq *",
+  "file *",
+  "env",
+  "pwd",
+  "which *",
+]
