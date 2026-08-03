@@ -1,0 +1,12 @@
+[icedos.applications.claude-code.agentMemory]
+# Users that get the `agent-memory` MCP server entry. Deliberately a plain list
+# rather than a per-user submodule: deriving definitions for
+# `claude-code.users.<name>` from that same attrset is infinite recursion.
+users = []
+
+# Container the stdio MCP server is exec'd inside. Matches the container name
+# used by the apps `agent-memory` module.
+containerName = "tdai-memory-hub"
+
+# Knowledge service port *inside* the container (not the published one).
+knowledgePort = 8424
