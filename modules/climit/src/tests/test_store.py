@@ -2,15 +2,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from climit import store
+from climit import config, store
 
 
 class TestStore(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.con = store.connect(Path(self.tmp.name) / "u.db")
+        self._retire = config.WEEKLY_SCOPED_RETIRE_DAYS
 
     def tearDown(self):
+        config.WEEKLY_SCOPED_RETIRE_DAYS = self._retire
         self.con.close()
         self.tmp.cleanup()
 
@@ -33,6 +35,30 @@ class TestStore(unittest.TestCase):
         store.set_meta(self.con, "k", "123")
         self.assertEqual(store.get_meta_int(self.con, "k"), 123)
         self.assertEqual(store.get_meta_int(self.con, "missing", 7), 7)
+
+    def test_prune_retired(self):
+        config.WEEKLY_SCOPED_RETIRE_DAYS = 30
+        scoped = config.WEEKLY_SCOPED_PREFIX
+        now = 1_000_000
+        store.record(self.con, now - 40 * 86_400_000,
+                     {scoped + "fable": {"util": 5.0, "resets_at": None}}, "poll")
+        store.record(self.con, now - 5 * 86_400_000,
+                     {scoped + "sonnet": {"util": 5.0, "resets_at": None}}, "poll")
+        store.record(self.con, now,
+                     {"five_hour": {"util": 5.0, "resets_at": None}}, "poll")
+        kept = store.prune_retired(
+            self.con, [scoped + "fable", scoped + "sonnet", "five_hour"], now
+        )
+        self.assertEqual(kept, [scoped + "sonnet", "five_hour"])
+
+    def test_prune_retired_disabled_at_zero(self):
+        config.WEEKLY_SCOPED_RETIRE_DAYS = 0
+        scoped = config.WEEKLY_SCOPED_PREFIX
+        now = 1_000_000
+        store.record(self.con, now - 40 * 86_400_000,
+                     {scoped + "fable": {"util": 5.0, "resets_at": None}}, "poll")
+        kept = store.prune_retired(self.con, [scoped + "fable"], now)
+        self.assertEqual(kept, [scoped + "fable"])
 
 
 if __name__ == "__main__":

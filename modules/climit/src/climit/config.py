@@ -48,6 +48,75 @@ WINDOW_LABELS = {
 }
 WINDOW_ORDER = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]
 
+# The only utilization-dict keys climit treats as real burn windows. Everything
+# else (nimbus_quill, iguana_necktie, omelette_promotional, ... — internal model
+# codenames Anthropic dumps into the dict) is ignored, mirroring Claude Code's
+# own hardcoded allowlist. Per-model windows instead come from the limits[] array.
+# A tuple copy so later mutation of WINDOW_ORDER can't silently diverge the set.
+KNOWN_WINDOW_KEYS = tuple(WINDOW_ORDER)
+
+# Per-model weekly windows are synthesized from limits[] (kind == "weekly_scoped")
+# as "<WEEKLY_SCOPED_PREFIX><slug>", so they flow through the same samples table.
+WEEKLY_SCOPED_PREFIX = "weekly_scoped:"
+
+# A weekly_scoped window whose most recent sample is older than this many days
+# stops being rendered. A retired/renamed model otherwise leaves frozen rows that
+# show forever at their last util. Current windows are re-recorded every poll
+# (resets_at jitters), so this never hides an active one. 0 disables the bound.
+WEEKLY_SCOPED_RETIRE_DAYS = int(os.environ.get("CLIMIT_SCOPED_RETIRE_DAYS", "30"))
+
+# Shorthand labels for compact surfaces (statusline, panel widget).
+SHORT_LABELS = {
+    "five_hour": "5h",
+    "seven_day": "wk",
+    "seven_day_opus": "opus",
+    "seven_day_sonnet": "son",
+}
+
+
+def weekly_scoped_slug(display_name: str) -> str:
+    """Stable slug for a per-model window key: lowercase, spaces -> '_'. Other
+    punctuation ('.', '-') is preserved so names like 'Claude Opus 4.5' round-trip."""
+    return display_name.strip().lower().replace(" ", "_")
+
+
+def window_display_name(window: str) -> str:
+    """Inverse of weekly_scoped_slug: 'weekly_scoped:claude_opus_4.5' -> 'Claude Opus 4.5'."""
+    slug = window[len(WEEKLY_SCOPED_PREFIX):] if window.startswith(WEEKLY_SCOPED_PREFIX) else window
+    return " ".join(w.title() for w in slug.split("_"))
+
+
+def is_known_window(window: str) -> bool:
+    """True for windows climit should render: the stable dict windows plus any
+    synthesized weekly_scoped key. Keeps phantom/promotional keys (incl. leftover
+    historical DB rows) out of every surface."""
+    return window in KNOWN_WINDOW_KEYS or window.startswith(WEEKLY_SCOPED_PREFIX)
+
 
 def label(window: str) -> str:
-    return WINDOW_LABELS.get(window, window)
+    if window in WINDOW_LABELS:
+        return WINDOW_LABELS[window]
+    if window.startswith(WEEKLY_SCOPED_PREFIX):
+        return "week · " + window_display_name(window)
+    return window
+
+
+def short_label(window: str) -> str:
+    if window in SHORT_LABELS:
+        return SHORT_LABELS[window]
+    if window.startswith(WEEKLY_SCOPED_PREFIX):
+        # Drop the shared "Claude " prefix so distinct model families don't all
+        # collapse to the same "Cla" token, and append the version so Opus 4.1/4.5
+        # stay distinct. Family/version are located by token shape, not position,
+        # so both "Claude Opus 4.5" and version-first "Claude 3.5 Sonnet" work.
+        words = window_display_name(window).split()
+        if len(words) > 1 and words[0] == "Claude":
+            words = words[1:]
+        family = next((w for w in words if w and not w[0].isdigit()), None)
+        version = next((w for w in words if w and w[0].isdigit()), None)
+        if family is None:
+            return (version or window[:3])[:3]
+        if version:
+            return family[:2] + "".join(p for p in version.split(".") if p)
+        return family[:3]
+    return window[:3]

@@ -77,6 +77,30 @@ def windows_present(con: sqlite3.Connection):
     return [r[0] for r in con.execute("SELECT DISTINCT window FROM samples").fetchall()]
 
 
+def latest_ts(con: sqlite3.Connection, window: str) -> int | None:
+    """Most recent sample timestamp (unix ms) for a window, or None."""
+    row = con.execute(
+        "SELECT MAX(ts) FROM samples WHERE window=?", (window,)
+    ).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
+def prune_retired(con: sqlite3.Connection, windows, now_ms: int):
+    """Filter out weekly_scoped windows whose newest sample is older than
+    config.WEEKLY_SCOPED_RETIRE_DAYS (retired/renamed models leave frozen rows
+    that would otherwise render and alert forever). Main windows pass through.
+    Used by both the CLI and the notifier so surfaces never diverge."""
+    windows = list(windows)
+    days = config.WEEKLY_SCOPED_RETIRE_DAYS
+    if not days:
+        return windows
+    cutoff = now_ms - days * 86_400_000
+    return [
+        w for w in windows
+        if not w.startswith(config.WEEKLY_SCOPED_PREFIX) or (latest_ts(con, w) or 0) >= cutoff
+    ]
+
+
 def get_meta(con: sqlite3.Connection, k: str, default=None):
     row = con.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
     return row[0] if row else default

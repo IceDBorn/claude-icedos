@@ -39,7 +39,11 @@ def _condition(r) -> str | None:
 
 def check(con, now_ms: int | None = None) -> None:
     now = now_ms if now_ms is not None else int(time.time() * 1000)
-    for window in store.windows_present(con):
+    for window in store.prune_retired(
+        con,
+        (w for w in store.windows_present(con) if config.is_known_window(w)),
+        now,
+    ):
         rows = store.samples_for(con, window)
         r = rates.compute(window, rows, now)
         if not r:

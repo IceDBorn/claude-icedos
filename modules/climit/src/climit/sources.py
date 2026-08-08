@@ -26,23 +26,63 @@ def _now_ms() -> int:
 
 
 def _parse_windows(util: dict) -> dict:
-    """Pick only window objects ({utilization, resets_at}) with a non-null value.
+    """Pick only real burn windows from a utilization payload.
 
-    Works for both cache and live payloads; ignores limits[]/spend/extra_usage
-    and auto-tolerates future window keys.
+    Works for both cache and live payloads. The utilization dict carries the
+    stable window objects ({utilization, resets_at}), a "limits" array, and a
+    dumping ground of internal model-codename keys (nimbus_quill, ...) that are
+    NOT windows. We keep only the stable config.KNOWN_WINDOW_KEYS (recording a
+    null resets_at as-is, so a post-reset zero sample is never dropped), and
+    additionally synthesize per-model weekly windows from the limits[] array
+    (kind == "weekly_scoped", keyed by scope.model.display_name), mirroring
+    Claude Code's own k1t handling.
     """
     out: dict = {}
     if not isinstance(util, dict):
         return out
     for key, val in util.items():
-        if isinstance(val, dict) and "utilization" in val and "resets_at" in val:
-            u = val.get("utilization")
-            if u is None:
-                continue
-            try:
-                out[key] = {"util": float(u), "resets_at": val.get("resets_at")}
-            except (TypeError, ValueError):
-                continue
+        if key == "limits" and isinstance(val, list):
+            out.update(_scoped_windows(val))
+            continue
+        if key not in config.KNOWN_WINDOW_KEYS:
+            continue
+        if not (isinstance(val, dict) and "utilization" in val and "resets_at" in val):
+            continue
+        u = val.get("utilization")
+        if u is None:
+            continue
+        try:
+            out[key] = {"util": float(u), "resets_at": val.get("resets_at")}
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _scoped_windows(limits) -> dict:
+    """Synthesize per-model weekly windows from the limits[] array.
+
+    Each weekly_scoped entry names a model via scope.model.display_name and
+    carries percent + resets_at. Becomes a regular window key
+    "<WEEKLY_SCOPED_PREFIX><slug>" so it flows through store/rates unchanged.
+    """
+    out: dict = {}
+    for entry in limits:
+        if not isinstance(entry, dict) or entry.get("kind") != "weekly_scoped":
+            continue
+        scope = entry.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        display = model.get("display_name") if isinstance(model, dict) else None
+        if not isinstance(display, str) or not display.strip():
+            continue
+        percent = entry.get("percent")
+        if percent is None:
+            continue
+        try:
+            util = float(percent)
+        except (TypeError, ValueError):
+            continue
+        key = config.WEEKLY_SCOPED_PREFIX + config.weekly_scoped_slug(display)
+        out[key] = {"util": util, "resets_at": entry.get("resets_at")}
     return out
 
 

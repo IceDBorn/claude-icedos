@@ -244,7 +244,7 @@ PlasmoidItem {
                     spacing: Kirigami.Units.smallSpacing
 
                     PlasmaComponents.Label {
-                        text: root.shortLabel(modelData.window)
+                        text: modelData.short_label || root.shortLabel(modelData.window)
                         opacity: 0.8
                         font.pointSize: Kirigami.Theme.smallFont.pointSize
                     }
@@ -339,7 +339,10 @@ PlasmoidItem {
 
                             Kirigami.Heading {
                                 level: 4
-                                text: root.labelFor(section.win.window)
+                                // prefer the CLI's own label (weekly_scoped windows and
+                                // any future key) so panel and CLI never diverge; fall
+                                // back to labelFor for label-less JSON from older climit
+                                text: section.win.label || root.labelFor(section.win.window)
                             }
                             PlasmaComponents.Label {
                                 visible: section.win.stale

@@ -64,11 +64,14 @@ def _col_width() -> int:
 
 
 def collect(con, now_ms: int, lookback: int = 60):
-    present = store.windows_present(con)
+    present = [w for w in store.windows_present(con) if config.is_known_window(w)]
     order = [w for w in config.WINDOW_ORDER if w in present]
-    order += [w for w in present if w not in config.WINDOW_ORDER]
+    scoped = sorted(
+        (w for w in present if w.startswith(config.WEEKLY_SCOPED_PREFIX)),
+        key=lambda w: config.window_display_name(w),
+    )
     out = []
-    for w in order:
+    for w in store.prune_retired(con, order + scoped, now_ms):
         r = compute(w, store.samples_for(con, w), now_ms, lookback_min=lookback)
         if r:
             out.append(r)
@@ -134,10 +137,9 @@ def render_table(rlist, now_ms: int) -> str:
 def render_statusline(rlist, now_ms: int) -> str:
     if not rlist:
         return "climit: no data"
-    short = {"five_hour": "5h", "seven_day": "wk", "seven_day_opus": "opus", "seven_day_sonnet": "son"}
     parts, warn = [], False
     for r in rlist:
-        parts.append(f"{short.get(r.window, r.window[:3])} {r.util:.0f}%·{r.per_hour:.1f}/h")
+        parts.append(f"{config.short_label(r.window)} {r.util:.0f}%·{r.per_hour:.1f}/h")
         warn = warn or r.will_exhaust_before_reset
     return ("⚠ " if warn else "") + "  ".join(parts)
 
@@ -174,7 +176,14 @@ def render_json(rlist, now_ms: int) -> str:
     return _json.dumps(
         {
             "now_ms": now_ms,
-            "windows": [dataclasses.asdict(r) for r in rlist],
+            "windows": [
+                {
+                    **dataclasses.asdict(r),
+                    "label": config.label(r.window),
+                    "short_label": config.short_label(r.window),
+                }
+                for r in rlist
+            ],
             "cross": cross_metric(rlist),
         },
         indent=2,
