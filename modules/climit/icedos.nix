@@ -159,6 +159,21 @@
                     hide = "never";
                   }
                 ];
+
+                # `ctrl-alt-l` (limits) spawns the climit dashboard from anywhere.
+                programs.zed-editor.userKeymaps = lib.mkIf (config.programs.zed-editor.enable or false) [
+                  {
+                    context = "Workspace";
+                    bindings = {
+                      "ctrl-alt-l" = [
+                        "task::Spawn"
+                        {
+                          task_name = "climit";
+                        }
+                      ];
+                    };
+                  }
+                ];
               }
             )
           ];
