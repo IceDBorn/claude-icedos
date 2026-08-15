@@ -1,9 +1,10 @@
-[icedos.applications.claude-code.users.username]
-enabledPlugins = []
-
-[icedos.applications.claude-code.users.username.skills]
-[icedos.applications.claude-code.users.username.extraSettings]
-
-[icedos.applications.claude-code.users.username.status-line]
-type = ""
-command = ""
+[[icedos.applications.claude-code.users.username.marketplaces]]
+name = ""
+source = ""
+owner = ""
+repo = ""
+url = ""
+path = ""
+domain = ""
+rev = ""
+hash = ""

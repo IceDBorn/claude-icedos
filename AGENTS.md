@@ -30,13 +30,38 @@ In the config root's `config.toml`, point this repo's `overrideUrl` at your loca
 checkout (`path:/abs/path/to/claude-icedos`), then `icedos rebuild --build` (no activation).
 
 ## Per-user config
-The claude-code per-user submodule is `icedos.applications.claude-code.users.<name>`
-(declared in `default`, materialised there with `genDefaults` — see core's *Per-user
-(`users`) options*). Sub-features **nest** under it rather than owning a `.users` tree:
-- `default` — `enabledPlugins`, `extraSettings`, `skills`, `status-line`, `mcpServers`,
-  `marketplaces`.
+
+The `default` module owns the per-user option
+`icedos.applications.claude-code.users` (an `attrsOf submodule` declared with
+`mkSubmoduleAttrsOption`, materialised per normal user via `icedosLib.users.genDefaults`
+per core/AGENTS.md Rule 1). Per-user values come from
+`[icedos.applications.claude-code.users.<name>.*]` TOML stanzas, which merge on top of
+the defaults. claude-code itself is enabled for every hm user
+(`enable = lib.mkDefault true`).
+- `settings` / `skills` — `programs.claude-code.settings` / `.skills`, TOML-friendly
+  via the raw NixOS passthrough (`[home-manager.users.<name>.programs.claude-code.*]`).
+- `marketplaces` — fetcher results are not TOML-expressible; list them under
+  `[[icedos.applications.claude-code.users.<name>.marketplaces]]` with a `source` enum
+  (`fetchFromGitHub`/`fetchFromGitLab`/`fetchgit`/`path`) and that source's fields
+  (`owner`+`repo`+`rev`+`hash`; fetchFromGitLab also takes `domain` for self-hosted;
+  fetchgit takes `url`+`rev`+`hash`; `path` takes an absolute `path`).
+  `path` is copied into the store when hm serializes `settings.json` (snapshot at
+  eval time), and pure eval forbids host paths there — use a store path (e.g.
+  `nix store add-path`) or `--impure`; the rest fetch at build time.
+- `enableMcpIntegration` — set `true` by `default`; MCP servers come from the shared
+  `programs.mcp.servers` registry (config root's `configs/mcp.toml`), never a per-user
+  `mcpServers` option.
+
+`default` leaves `package` at the upstream default (the unfree default `pkgs.claude-code`
+evals fine because core sets `home-manager.useGlobalPkgs = true`, so hm follows the
+system's pkgs incl. `allowUnfree`). It declares no hooks — peon-ping registers its own
+via upstream `programs.peon-ping.claudeCodeIntegration`
+(`icedos.applications.peon-ping.users.<u>.claudeCodeIntegration`). Modules needing
+per-user config (`climit`, `claude-review-mcp`) declare
+`icedos.applications.claude-code.users.<name>` themselves.
+
 - `climit` — `…users.<name>.climit` (`interval`, `alerts`, `widget`); the module adds
   only the nested submodule + its daemon/plasmoid, no `.users` of its own.
 - `peon-ping` — a **standalone apps module** (`icedos.applications.peon-ping.users`, not part
-  of claude-code). `default` *consumes* it (`hasAttr user (…applications.peon-ping.users)`) to
-  wire the Claude Code hooks; the audio integration itself lives in the apps repo.
+  of claude-code). It wires its own Claude Code hooks via
+  `programs.peon-ping.claudeCodeIntegration`; the audio integration lives in the apps repo.

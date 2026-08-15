@@ -12,7 +12,6 @@ let
     effort
     timeout
     maxDiffBytes
-    provideClaudeCode
     scratchDir
     allowNetwork
     allowFable
@@ -76,7 +75,6 @@ in
 
         timeout = mkNumberOption { default = timeout; };
         maxDiffBytes = mkNumberOption { default = maxDiffBytes; };
-        provideClaudeCode = mkBoolOption { default = provideClaudeCode; };
 
         # Where the `work` tier (claude_verify / claude_help) may write. The
         # repository itself stays read-only — implementation belongs to the caller.
@@ -176,9 +174,9 @@ in
               export CLAUDE_REVIEW_TIMEOUT_MS=${esc (toString (cfg.timeout * 1000))}
               export CLAUDE_REVIEW_MAX_CALLS_PER_HOUR=${esc (toString cfg.maxCallsPerHour)}
               export CLAUDE_REVIEW_MAX_DIFF_BYTES=${esc (toString cfg.maxDiffBytes)}
-              export CLAUDE_BIN=${
-                esc (if cfg.provideClaudeCode then "${lib.getExe pkgs.claude-code}" else "claude")
-              }
+              # claude-code is always installed by the `default` module; pin the
+              # store path so PATH resolution can't drift.
+              export CLAUDE_BIN=${esc "${lib.getExe pkgs.claude-code}"}
               export PATH="${lib.makeBinPath (toolchainPkgs cfg.extraPackages)}:$PATH"
               exec ${reviewMcpPkg}/bin/claude-review-mcp "$@"
             '';
@@ -218,19 +216,6 @@ in
                 }
               ];
             }
-          ];
-
-          home-manager.sharedModules = [
-            (
-              { config, lib, ... }:
-
-              let
-                userCfg = claudeUsers.${config.home.username}.reviewMcp or null;
-              in
-              lib.mkIf (userCfg != null) {
-                home.packages = lib.optional userCfg.provideClaudeCode pkgs.claude-code;
-              }
-            )
           ];
         }
       )

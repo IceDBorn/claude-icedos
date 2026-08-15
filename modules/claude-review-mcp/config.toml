@@ -12,7 +12,6 @@ maxCallsPerHour = 20
 effort = "high"
 timeout = 900
 maxDiffBytes = 200000
-provideClaudeCode = true
 scratchDir = "~/.cache/claude-review-mcp/scratch"
 allowNetwork = false
 # Permit the `fable` model. Off: the tools offer only `opus`/`sonnet`, and model-override

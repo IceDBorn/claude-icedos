@@ -27,7 +27,6 @@ is no `enable` option — loading the module is the opt-in. System defaults are 
 | `effort` | `"high"` | `low` \| `medium` \| `high` \| `xhigh` \| `max`. Depth/spend per call. |
 | `timeout` | `900` | Seconds per call. The wrapper converts it to `CLAUDE_REVIEW_TIMEOUT_MS` (×1000). |
 | `maxDiffBytes` | `200000` | Larger diffs — and plans sent to `claude_review_plan` — are truncated; Claude is told, and so is the caller. |
-| `provideClaudeCode` | `true` | Install `pkgs.claude-code` and pin `CLAUDE_BIN` to its store path. ★ |
 | `scratchDir` | `~/.cache/claude-review-mcp/scratch` | Where the `work` tier may write, and where `claude_analyze_image` stages validated image copies (see below). |
 | `allowNetwork` | `false` | `true` lifts the egress deny-list. Leave it off. |
 | `allowFable` | `false` | Model policy. Off: the tools offer only `opus`/`sonnet`, and the model-override env vars are stripped from the `claude` child. `true` adds `fable` to the enum **and** lifts that strip — it is one switch, not two. |
@@ -37,14 +36,15 @@ is no `enable` option — loading the module is the opt-in. System defaults are 
 ★ Every value above is per-user. Each configured user gets its own wrapper with its own
 values baked in, and `icedos claude mcp` selects one at runtime from `id -un`; a user with
 no `reviewMcp` config exits with an error instead of starting. So `allowedRoots` no longer
-leaks between users, and `CLAUDE_BIN` follows that user's own `provideClaudeCode`. Set
-defaults for everyone in this module's `config.toml`, or override one user under
-`icedos.applications.claude-code.users.<name>.reviewMcp`. Either way, rebuild.
+leaks between users. Set defaults for everyone in this module's `config.toml`, or
+override one user under `icedos.applications.claude-code.users.<name>.reviewMcp`. Either way,
+rebuild.
 
-`provideClaudeCode` matters more than it looks. Without it, `claude` resolves off `PATH` — and
-on this machine that had been an **npx cache path under Zed's bundled node**
-(`~/.local/share/zed/node/cache/_npx/…`), which npx can evict at any time. The module pins a
-real store path instead.
+The wrapper always pins `CLAUDE_BIN` to the nixpkgs store path (`pkgs.claude-code`), which the
+`default` module installs unconditionally (`programs.claude-code` leaves `package` at the
+upstream default). Never resolves `claude` off `PATH` — on this machine that had been an
+**npx cache path under Zed's bundled node** (`~/.local/share/zed/node/cache/_npx/…`), which
+npx can evict at any time.
 
 The server is exposed as `icedos claude mcp`. Every env var below is **exported by the
 wrapper** (locked at build time), so a misconfigured MCP client cannot widen the allowed
@@ -350,7 +350,7 @@ client's env block takes precedence.
 
 | Env var | Locked | Meaning |
 |---|---|---|
-| `CLAUDE_BIN` | yes | Absolute path to the `claude` binary (pinned store path when `provideClaudeCode`, else `"claude"` from PATH). |
+| `CLAUDE_BIN` | yes | Absolute path to the `claude` binary — always the pinned nixpkgs store path (`pkgs.claude-code`), installed by the `default` module. |
 | `CLAUDE_REVIEW_ALLOWED_ROOTS` | yes | Colon-separated repo roots. |
 | `CLAUDE_REVIEW_ALLOWED_IMAGE_ROOTS` | yes | Colon-separated roots for `claude_analyze_image`. Empty = falls back to `ALLOWED_ROOTS` — deliberate, unlike the fail-closed repo roots above: it only widens Read reach for image analysis. |
 | `CLAUDE_REVIEW_MAX_IMAGE_BYTES` | yes | Byte cap for images handed to `claude_analyze_image`. |
