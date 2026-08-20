@@ -1,19 +1,16 @@
 { icedosLib, lib, ... }:
 
 {
-  # Contributes a nested `climit` submodule to the claude-code per-user option
-  # declared in ../default, so climit config lives at
-  # `icedos.applications.claude-code.users.<name>.climit` and materialises via
-  # ../default's `genDefaults`. NOTE: this child declaration MUST omit `default`
-  # — only the always-loaded owner (../default) sets `default = {}`. Two
-  # `attrsOf submodule` declarations both carrying a default do NOT type-merge
-  # (nixpkgs throws "already declared"); with one default they merge cleanly.
+  # Nested `climit` submodule for the claude-code per-user option in ../default.
+  # MUST omit `default` — two `attrsOf submodule` decls with defaults do not type-merge.
   options.icedos.applications.claude-code.users =
     let
       inherit (lib) importTOML;
 
       inherit (icedosLib)
         mkBoolOption
+        mkEnumOption
+        mkIntBetweenOption
         mkNumberOption
         mkSubmoduleAttrsOption
         ;
@@ -22,6 +19,9 @@
         interval
         alerts
         widget
+        alertUrgency
+        alertTimeout
+        alertTransient
         ;
     in
     mkSubmoduleAttrsOption { } {
@@ -29,6 +29,30 @@
         interval = mkNumberOption { default = interval; };
         alerts = mkBoolOption { default = alerts; };
         widget = mkBoolOption { default = widget; };
+
+        # Plasma never expires critical urgency: alertUrgency = "critical" + alertTimeout = 0 is sticky.
+        alertUrgency =
+          mkEnumOption
+            {
+              path = "icedos.applications.claude-code.users.username.climit.alertUrgency";
+              source = ./config.toml;
+              default = alertUrgency;
+            }
+            [
+              "critical"
+              "low"
+              "normal"
+            ];
+
+        # Seconds on screen; 0 means "until dismissed".
+        alertTimeout = mkIntBetweenOption {
+          path = "icedos.applications.claude-code.users.username.climit.alertTimeout";
+          source = ./config.toml;
+          default = alertTimeout;
+        } 0 300;
+
+        # Popup only — skip the notification history.
+        alertTransient = mkBoolOption { default = alertTransient; };
       };
     };
 
@@ -66,10 +90,8 @@
             };
           };
 
-          # KDE Plasma 6 applet that renders climit's `status --json` on the panel
-          # or desktop. It shells out to the CLI above (absolute store path baked in
-          # via @climit@) with --no-poll, so it only reads the DB the daemon fills —
-          # no network, no rate-limit exposure.
+          # KDE Plasma 6 applet rendering `status --json` (store path baked in via
+          # @climit@). --no-poll means it reads the DB the daemon fills; no network.
           climitPlasmoid = pkgs.stdenvNoCC.mkDerivation {
             pname = "climit-plasmoid";
             version = "0.1.0";
@@ -122,10 +144,8 @@
                   }
                 ];
 
-                # Plasma 6 widget. plasmashell discovers plasmoids from any
-                # XDG_DATA_DIRS/plasma/plasmoids/, which home.packages populates.
-                # Add it via "Add Widgets" (panel or desktop), or pin it to the KDE
-                # panel by adding "org.icedos.climit" to icedos.desktop.kde.panel.widgets.
+                # plasmashell finds plasmoids via XDG_DATA_DIRS, which home.packages populates.
+                # Add via "Add Widgets", or pin "org.icedos.climit" in icedos.desktop.kde.panel.widgets.
                 home.packages = lib.optional userCfg.widget climitPlasmoid;
 
                 systemd.user.services.climit = {
@@ -134,7 +154,14 @@
                   Service = {
                     ExecStart =
                       "${climitPkg}/bin/climit daemon --interval ${toString userCfg.interval}"
-                      + lib.optionalString (!userCfg.alerts) " --no-alerts";
+                      + (
+                        if !userCfg.alerts then
+                          " --no-alerts"
+                        else
+                          " --alert-urgency ${userCfg.alertUrgency}"
+                          + " --alert-timeout ${toString userCfg.alertTimeout}"
+                          + lib.optionalString userCfg.alertTransient " --alert-transient"
+                      );
 
                     Restart = "on-failure";
                     RestartSec = 30;

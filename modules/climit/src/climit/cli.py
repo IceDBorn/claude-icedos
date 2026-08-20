@@ -1,6 +1,7 @@
 """Command-line interface: status (default), watch, statusline/json, poll, daemon."""
 import argparse
 import dataclasses
+import functools
 import json as _json
 import os
 import shutil
@@ -242,7 +243,13 @@ def cmd_daemon(args) -> int:
     alert = None
     if not args.no_alerts:
         from . import notify
-        alert = notify.check
+
+        style = notify.AlertStyle(
+            urgency=args.alert_urgency,
+            timeout=args.alert_timeout,
+            transient=args.alert_transient,
+        )
+        alert = functools.partial(notify.check, style=style)
     print(f"climit daemon: interval {args.interval}s · db {config.DB_PATH}")
     poller.run(interval=args.interval, alert=alert)
     return 0
@@ -281,6 +288,12 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("daemon", help="run the background poller")
     d.add_argument("--interval", type=int, default=config.DEFAULT_INTERVAL)
     d.add_argument("--no-alerts", action="store_true", help="disable notify-send alerts")
+    d.add_argument("--alert-urgency", choices=("low", "normal", "critical"), default="normal",
+                   help="alert urgency; critical never auto-expires on Plasma")
+    d.add_argument("--alert-timeout", type=int, default=10,
+                   help="seconds an alert stays on screen (0 = until dismissed)")
+    d.add_argument("--alert-transient", action="store_true",
+                   help="don't keep alerts in the notification history")
 
     cb = sub.add_parser("contrib", help="what's contributing to your usage (local, approximate)")
     cb.add_argument("--hours", type=int, default=24, help="lookback window in hours (default 24)")

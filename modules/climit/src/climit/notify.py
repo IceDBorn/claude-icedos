@@ -1,9 +1,8 @@
-"""Optional desktop alerts via notify-send.
+"""Optional desktop alerts via notify-send, debounced per window through the meta table.
 
-Fires when a window is projected to exhaust before its reset, or crosses a
-utilization threshold. Debounced per window through the meta table so you get one
-notification per condition, not one per poll.
+Plasma never expires critical urgency, so AlertStyle defaults to non-sticky.
 """
+import dataclasses
 import shutil
 import subprocess
 import time
@@ -14,17 +13,31 @@ THRESHOLDS = (80.0, 95.0)
 DEBOUNCE_MS = 30 * 60_000
 
 
-def _send(title: str, body: str, urgency: str = "normal") -> None:
+@dataclasses.dataclass(frozen=True)
+class AlertStyle:
+    urgency: str = "normal"  # low | normal | critical
+    timeout: int = 10  # seconds on screen; 0 = until dismissed
+    transient: bool = False  # skip the notification history
+
+
+DEFAULT_STYLE = AlertStyle()
+
+
+def _send(con, key: str, title: str, body: str, style: AlertStyle = DEFAULT_STYLE) -> None:
     exe = shutil.which("notify-send")
     if not exe:
         return
+    argv = [exe, "-a", "climit", "-u", style.urgency, "-t", str(style.timeout * 1000), "-p"]
+    if style.transient:
+        argv += ["-h", "int:transient:1"]
+    nid = store.get_meta_int(con, key + "_nid", 0)
+    if nid:
+        argv += ["-r", str(nid)]  # a stale id is harmless — the server just makes a new one
+    argv += [title, body]
     try:
-        subprocess.run(
-            [exe, "-u", urgency, "-a", "climit", title, body],
-            check=False,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
+        proc = subprocess.run(argv, check=False, timeout=10, capture_output=True, text=True)
+        store.set_meta(con, key + "_nid", int((proc.stdout or "").strip()))
+    except (OSError, subprocess.SubprocessError, ValueError):
         pass
 
 
@@ -37,7 +50,7 @@ def _condition(r) -> str | None:
     return None
 
 
-def check(con, now_ms: int | None = None) -> None:
+def check(con, now_ms: int | None = None, style: AlertStyle = DEFAULT_STYLE) -> None:
     now = now_ms if now_ms is not None else int(time.time() * 1000)
     for window in store.prune_retired(
         con,
@@ -51,7 +64,8 @@ def check(con, now_ms: int | None = None) -> None:
         cond = _condition(r)
         key = f"alert_{window}"
         if cond is None:
-            store.set_meta(con, key, "")  # cleared → a later re-cross re-notifies
+            # cleared → a re-cross re-notifies; _nid kept so it replaces rather than stacks
+            store.set_meta(con, key, "")
             continue
         prev = store.get_meta(con, key, "")
         last_ms = store.get_meta_int(con, key + "_ms", 0)
@@ -62,10 +76,12 @@ def check(con, now_ms: int | None = None) -> None:
         label = config.label(window)
         if cond == "exhaust":
             _send(
+                con,
+                key,
                 "climit — pace warning",
                 f"{label}: {r.util:.0f}% used, ~{r.per_hour:.1f}%/h — projected to hit the cap "
                 "before it resets.",
-                urgency="critical",
+                style,
             )
         else:
-            _send("climit — usage high", f"{label}: {r.util:.0f}% used.", urgency="normal")
+            _send(con, key, "climit — usage high", f"{label}: {r.util:.0f}% used.", style)
