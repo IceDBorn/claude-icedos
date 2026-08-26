@@ -5,3 +5,6 @@ widget = true
 alertUrgency = "normal"
 alertTimeout = 10
 alertTransient = false
+
+# Zed keybind to spawn the climit dashboard (Ctrl-Alt-L default).
+keybind = "ctrl-alt-l"

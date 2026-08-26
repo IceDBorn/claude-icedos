@@ -107,10 +107,7 @@ in
 
           claudeUsers = config.icedos.applications.claude-code.users;
 
-          # Fetcher per source enum value: pkgs fetchers named by the value.
-          # "path" is copied into the store when hm serializes settings.json
-          # (toJSON) — a snapshot at eval time; pure eval forbids host paths,
-          # so store paths work and host dirs need --impure or nix store add-path.
+          # Fetcher attr named by source value; "path" copies into store at eval time (pure eval forbids host paths).
           fetchMarketplace =
             m:
             {

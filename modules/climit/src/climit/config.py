@@ -48,21 +48,16 @@ WINDOW_LABELS = {
 }
 WINDOW_ORDER = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]
 
-# The only utilization-dict keys climit treats as real burn windows. Everything
-# else (nimbus_quill, iguana_necktie, omelette_promotional, ... — internal model
-# codenames Anthropic dumps into the dict) is ignored, mirroring Claude Code's
-# own hardcoded allowlist. Per-model windows instead come from the limits[] array.
-# A tuple copy so later mutation of WINDOW_ORDER can't silently diverge the set.
+# Real burn-window keys; internal model codenames (nimbus_quill, ...) ignored, mirroring Claude Code's allowlist.
+# Tuple copy so later mutation of WINDOW_ORDER can't silently diverge the set.
 KNOWN_WINDOW_KEYS = tuple(WINDOW_ORDER)
 
 # Per-model weekly windows are synthesized from limits[] (kind == "weekly_scoped")
 # as "<WEEKLY_SCOPED_PREFIX><slug>", so they flow through the same samples table.
 WEEKLY_SCOPED_PREFIX = "weekly_scoped:"
 
-# A weekly_scoped window whose most recent sample is older than this many days
-# stops being rendered. A retired/renamed model otherwise leaves frozen rows that
-# show forever at their last util. Current windows are re-recorded every poll
-# (resets_at jitters), so this never hides an active one. 0 disables the bound.
+# Retire weekly_scoped windows with no sample for this many days (0 = disabled).
+# Active windows are re-recorded every poll (resets_at jitters), so this never hides them.
 WEEKLY_SCOPED_RETIRE_DAYS = int(os.environ.get("CLIMIT_SCOPED_RETIRE_DAYS", "30"))
 
 # Shorthand labels for compact surfaces (statusline, panel widget).
@@ -105,10 +100,7 @@ def short_label(window: str) -> str:
     if window in SHORT_LABELS:
         return SHORT_LABELS[window]
     if window.startswith(WEEKLY_SCOPED_PREFIX):
-        # Drop the shared "Claude " prefix so distinct model families don't all
-        # collapse to the same "Cla" token, and append the version so Opus 4.1/4.5
-        # stay distinct. Family/version are located by token shape, not position,
-        # so both "Claude Opus 4.5" and version-first "Claude 3.5 Sonnet" work.
+        # Drop "Claude " prefix so families don't collapse to "Cla", append version for distinctness (e.g. Opus 4.1/4.5).
         words = window_display_name(window).split()
         if len(words) > 1 and words[0] == "Claude":
             words = words[1:]

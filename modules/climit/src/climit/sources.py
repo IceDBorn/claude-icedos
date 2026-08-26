@@ -135,5 +135,4 @@ def _do_fetch(url: str, token: str, retried: bool) -> dict:
         raise FetchError(f"usage fetch HTTP {e.code}", status=e.code) from e
     except urllib.error.URLError as e:
         raise FetchError(f"usage fetch failed: {e.reason}") from e
-    # Live response carries the window objects at the top level.
     return _parse_windows(data)

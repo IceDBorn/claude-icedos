@@ -58,10 +58,7 @@ class TestRates(unittest.TestCase):
         self.assertIsNone(parse_iso("not-a-date"))
 
     def test_jitter_resets_at_not_a_reset(self):
-        # The live endpoint returns resets_at that wobbles sub-second between
-        # polls (20:59:59.9 vs 21:00:00.1 around the same boundary). That must
-        # NOT read as a window reset — otherwise the rate window collapses and
-        # burn stays pinned at 0 even while utilization climbs.
+        # Sub-second resets_at wobble must NOT trigger a window reset — burn would collapse to 0.
         rows = [
             (0, 27.0, "2026-07-21T21:00:00.1+00:00"),
             (30 * MIN, 28.0, "2026-07-21T20:59:59.9+00:00"),

@@ -12,12 +12,14 @@
         mkEnumOption
         mkIntBetweenOption
         mkNumberOption
+        mkStrOption
         mkSubmoduleAttrsOption
         ;
 
       inherit ((importTOML ./config.toml).icedos.applications.claude-code.users.username.climit)
         interval
         alerts
+        keybind
         widget
         alertUrgency
         alertTimeout
@@ -53,6 +55,9 @@
 
         # Popup only — skip the notification history.
         alertTransient = mkBoolOption { default = alertTransient; };
+
+        # Zed keybind to spawn the climit dashboard (Ctrl-Alt-L default).
+        keybind = mkStrOption { default = keybind; };
       };
     };
 
@@ -192,7 +197,7 @@
                   {
                     context = "Workspace";
                     bindings = {
-                      "ctrl-alt-l" = [
+                      ${userCfg.keybind} = [
                         "task::Spawn"
                         {
                           task_name = "climit";
