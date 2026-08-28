@@ -4,11 +4,15 @@ let
   inherit (lib) attrNames head importTOML;
 
   inherit (icedosLib)
+    mkBoolOption
     mkEnumOption
+    mkIntBetweenOption
     mkStrOption
     mkSubmoduleAttrsOption
     mkSubmoduleListOption
     ;
+
+  gcDefaults = (importTOML ./config.toml).icedos.applications.claude-code;
 
   marketplaceTemplate = head (importTOML ./config.toml)
     .icedos.applications.claude-code.users.username.marketplaces;
@@ -40,40 +44,52 @@ let
   };
 in
 {
-  options.icedos.applications.claude-code.users = mkSubmoduleAttrsOption { default = { }; } {
-    marketplaces = mkSubmoduleListOption { default = [ ]; } {
-      name = mkStrOption { default = marketplaceTemplate.name; };
+  options.icedos.applications.claude-code = {
+    # Whether `icedos gc` prunes stale claude session data (unshade-style).
+    includeInIcedosGc = mkBoolOption { default = gcDefaults.includeInIcedosGc; };
 
-      # source names the pkgs fetcher attr (fetchFromGitHub/fetchFromGitLab/
-      # fetchgit) or "path" for a local dir. Empty default aborts until set.
-      source = mkEnumOption {
-        path = "${mpOptPath}.source";
-        source = ./config.toml;
-        default = marketplaceTemplate.source;
-      } (attrNames requiredFor);
+    # Retain session transcripts/history newer than this many days on GC.
+    sessionRetentionDays = mkIntBetweenOption {
+      path = "icedos.applications.claude-code.sessionRetentionDays";
+      source = ./config.toml;
+      default = gcDefaults.sessionRetentionDays;
+    } 1 3650;
 
-      owner = mkStrOption { default = marketplaceTemplate.owner; };
-      repo = mkStrOption { default = marketplaceTemplate.repo; };
-      url = mkStrOption { default = marketplaceTemplate.url; };
+    users = mkSubmoduleAttrsOption { default = { }; } {
+      marketplaces = mkSubmoduleListOption { default = [ ]; } {
+        name = mkStrOption { default = marketplaceTemplate.name; };
 
-      # Absolute path required once set; "" is the unused default.
-      path =
-        let
-          check =
-            v:
-            v == ""
-            || icedosLib.validate.str {
-              regex = "/.+";
-            } "${mpOptPath}.path" ./config.toml v;
-        in
-        lib.mkOption {
-          type = lib.types.addCheck lib.types.str check;
-          default = marketplaceTemplate.path;
-        };
+        # source names the pkgs fetcher attr (fetchFromGitHub/fetchFromGitLab/
+        # fetchgit) or "path" for a local dir. Empty default aborts until set.
+        source = mkEnumOption {
+          path = "${mpOptPath}.source";
+          source = ./config.toml;
+          default = marketplaceTemplate.source;
+        } (attrNames requiredFor);
 
-      domain = mkStrOption { default = marketplaceTemplate.domain; };
-      rev = mkStrOption { default = marketplaceTemplate.rev; };
-      hash = mkStrOption { default = marketplaceTemplate.hash; };
+        owner = mkStrOption { default = marketplaceTemplate.owner; };
+        repo = mkStrOption { default = marketplaceTemplate.repo; };
+        url = mkStrOption { default = marketplaceTemplate.url; };
+
+        # Absolute path required once set; "" is the unused default.
+        path =
+          let
+            check =
+              v:
+              v == ""
+              || icedosLib.validate.str {
+                regex = "/.+";
+              } "${mpOptPath}.path" ./config.toml v;
+          in
+          lib.mkOption {
+            type = lib.types.addCheck lib.types.str check;
+            default = marketplaceTemplate.path;
+          };
+
+        domain = mkStrOption { default = marketplaceTemplate.domain; };
+        rev = mkStrOption { default = marketplaceTemplate.rev; };
+        hash = mkStrOption { default = marketplaceTemplate.hash; };
+      };
     };
   };
 
@@ -106,6 +122,29 @@ in
             ;
 
           claudeUsers = config.icedos.applications.claude-code.users;
+          gcDays = config.icedos.applications.claude-code.sessionRetentionDays;
+
+          # Prune stale claude session data during `icedos gc` (unshade-style).
+          claudeGcHook = ''
+            C="''${HOME}/.claude"
+            [ -d "''${C}" ] || exit 0
+            # *.jsonl only: ~/.claude/projects/<slug>/memory/*.md holds persistent memory.
+            find "''${C}/projects" -mindepth 2 -type f -name '*.jsonl' -mtime "+${toString gcDays}" -delete 2>/dev/null || true
+            # Each session's <id>/ subdir (tool-results, subagents) is pruned only
+            # when nothing under it changed within retention; memory/ is untouched.
+            for d in "''${C}"/projects/*/*/; do
+              [ -d "$d" ] || continue
+              case "''${d%/}" in */memory) continue ;; esac
+              # Keep sidecars while the sibling transcript still exists (prime-agent-style).
+              [ -f "''${d%/}.jsonl" ] && continue
+              find "$d" -type f -newermt "@$(( $(date +%s) - ${toString gcDays}*86400 ))" -print -quit | grep -q . || rm -rf -- "$d"
+            done
+            find "''${C}/plans" -maxdepth 1 -type f -name '*.md' -mtime "+${toString gcDays}" -delete 2>/dev/null || true
+            find "''${C}/session-env" -mindepth 1 -maxdepth 1 -type d -mtime "+${toString gcDays}" -exec rm -rf -- {} + 2>/dev/null || true
+            find "''${C}/file-history" -type f -mtime "+${toString gcDays}" -delete 2>/dev/null || true
+            find "''${C}/file-history" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+            find "''${C}/shell-snapshots" -type f -mtime "+${toString gcDays}" -delete 2>/dev/null || true
+          '';
 
           # Fetcher attr named by source value; "path" copies into store at eval time (pure eval forbids host paths).
           fetchMarketplace =
@@ -159,6 +198,11 @@ in
           icedos.applications.claude-code.users = icedosLib.users.genDefaults {
             inherit (config.icedos) users;
           };
+
+          # `icedos gc` prunes stale claude session data per user (unshade-style).
+          icedos.system.gc.hooks.postGc = mkIf config.icedos.applications.claude-code.includeInIcedosGc [
+            claudeGcHook
+          ];
 
           assertions =
             let
