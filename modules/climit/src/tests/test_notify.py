@@ -51,10 +51,12 @@ class TestSendArgv(unittest.TestCase):
         self.tmp.cleanup()
 
     def _run(self, style=notify.DEFAULT_STYLE, stdout="42\n", key="alert_w"):
-        with mock.patch.object(notify.shutil, "which", return_value="/bin/notify-send"):
-            with mock.patch.object(notify.subprocess, "run") as run:
-                run.return_value = mock.Mock(stdout=stdout)
-                notify._send(self.con, key, "title", "body", style)
+        with (
+            mock.patch.object(notify.shutil, "which", return_value="/bin/notify-send"),
+            mock.patch.object(notify.subprocess, "run") as run,
+        ):
+            run.return_value = mock.Mock(stdout=stdout)
+            notify._send(self.con, key, "title", "body", style)
         run.assert_called_once()
         return run.call_args[0][0]
 
@@ -94,9 +96,11 @@ class TestSendArgv(unittest.TestCase):
         self.assertEqual(store.get_meta_int(self.con, "alert_w_nid", 0), 0)
 
     def test_no_notify_send_is_a_noop(self):
-        with mock.patch.object(notify.shutil, "which", return_value=None):
-            with mock.patch.object(notify.subprocess, "run") as run:
-                notify._send(self.con, "alert_w", "title", "body")
+        with (
+            mock.patch.object(notify.shutil, "which", return_value=None),
+            mock.patch.object(notify.subprocess, "run") as run,
+        ):
+            notify._send(self.con, "alert_w", "title", "body")
         run.assert_not_called()
 
 

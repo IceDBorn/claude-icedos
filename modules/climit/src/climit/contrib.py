@@ -154,8 +154,10 @@ def render(acc: dict, hours: int | None = None) -> str:
         return f"no local usage found in the last {hours}h."
     lines = [
         "What's contributing to your limits usage?",
-        f"Approximate, based on local sessions on this machine — last {hours}h · "
-        "independent characteristics of your usage, not a breakdown.",
+        (
+            f"Approximate, based on local sessions on this machine — last {hours}h · "
+            "independent characteristics of your usage, not a breakdown."
+        ),
         "",
     ]
     tips = []

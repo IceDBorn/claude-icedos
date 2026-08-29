@@ -109,7 +109,7 @@ def get_meta(con: sqlite3.Connection, k: str, default=None):
 def get_meta_int(con: sqlite3.Connection, k: str, default: int = 0) -> int:
     v = get_meta(con, k)
     try:
-        return int(v)
+        return int(v) if v is not None else default
     except (TypeError, ValueError):
         return default
 

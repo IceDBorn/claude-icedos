@@ -46,7 +46,7 @@ def fmt_dur(ms) -> str:
 
 
 def bar(util: float, width: int = 16) -> str:
-    filled = max(0, min(width, int(round(util / 100 * width))))
+    filled = max(0, min(width, round(util / 100 * width)))
     return "█" * filled + "░" * (width - filled)
 
 

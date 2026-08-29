@@ -77,7 +77,7 @@ def weekly_scoped_slug(display_name: str) -> str:
 
 def window_display_name(window: str) -> str:
     """Inverse of weekly_scoped_slug: 'weekly_scoped:claude_opus_4.5' -> 'Claude Opus 4.5'."""
-    slug = window[len(WEEKLY_SCOPED_PREFIX):] if window.startswith(WEEKLY_SCOPED_PREFIX) else window
+    slug = window.removeprefix(WEEKLY_SCOPED_PREFIX)
     return " ".join(w.title() for w in slug.split("_"))
 
 
