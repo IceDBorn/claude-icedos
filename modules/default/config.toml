@@ -3,6 +3,8 @@
 includeInIcedosGc = false
 # Retain session transcripts/history newer than this many days on GC.
 sessionRetentionDays = 30
+# Whether the launcher shows a desktop entry that opens in the default terminal.
+desktopEntry = true
 
 [[icedos.applications.claude-code.users.username.marketplaces]]
 name = ""

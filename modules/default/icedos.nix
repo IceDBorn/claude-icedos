@@ -55,6 +55,9 @@ in
       default = gcDefaults.sessionRetentionDays;
     } 1 3650;
 
+    # Whether the launcher installs a desktop entry opening in the default terminal.
+    desktopEntry = mkBoolOption { default = gcDefaults.desktopEntry; };
+
     users = mkSubmoduleAttrsOption { default = { }; } {
       marketplaces = mkSubmoduleListOption { default = [ ]; } {
         name = mkStrOption { default = marketplaceTemplate.name; };
@@ -123,6 +126,7 @@ in
 
           claudeUsers = config.icedos.applications.claude-code.users;
           gcDays = config.icedos.applications.claude-code.sessionRetentionDays;
+          desktopEntry = config.icedos.applications.claude-code.desktopEntry;
 
           # Prune stale claude session data during `icedos gc` (unshade-style).
           claudeGcHook = ''
@@ -264,12 +268,24 @@ in
               }
             )
             (
-              { lib, ... }:
+              { config, lib, ... }:
 
               {
                 programs.claude-code = {
                   enable = lib.mkDefault true;
                   enableMcpIntegration = true;
+                };
+                # Terminal=true: the desktop environment launches the user's default terminal.
+                xdg.desktopEntries."claude-code" = lib.mkIf (desktopEntry && config.programs.claude-code.enable) {
+                  name = "Claude Code";
+                  comment = "AI coding assistant (terminal UI)";
+                  icon = "utilities-terminal";
+                  exec = "claude";
+                  terminal = true;
+                  categories = [
+                    "Development"
+                    "Utility"
+                  ];
                 };
               }
             )
