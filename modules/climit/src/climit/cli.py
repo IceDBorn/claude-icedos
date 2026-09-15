@@ -1,15 +1,17 @@
-"""Command-line interface: status (default), watch, statusline/json, poll, daemon."""
+"""Command-line interface: watch (default), status, statusline, poll, contrib."""
 import argparse
 import dataclasses
-import functools
+import getpass
 import json as _json
 import os
 import shutil
+import socket
+import subprocess
 import sys
 import time
 
-from . import __version__, config, poller, store
-from .rates import compute
+from . import __version__, config, poller, sources, store
+from .rates import compute, to_ms
 
 
 def _now_ms() -> int:
@@ -21,8 +23,10 @@ def _color_on() -> bool:
     return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 
-def _c(code: str, s: str) -> str:
-    return f"\033[{code}m{s}\033[0m" if _color_on() else s
+def _c(code: str, s: str, on: bool | None = None) -> str:
+    if on is None:
+        on = _color_on()
+    return f"\033[{code}m{s}\033[0m" if on else s
 
 
 def _util_code(u: float) -> str:
@@ -65,6 +69,7 @@ def _col_width() -> int:
 
 
 def collect(con, now_ms: int, lookback: int = 60):
+    """The windows and rates every surface shows (terminal, widget, status line, alerts)."""
     present = [w for w in store.windows_present(con) if config.is_known_window(w)]
     order = [w for w in config.WINDOW_ORDER if w in present]
     scoped = sorted(
@@ -73,21 +78,11 @@ def collect(con, now_ms: int, lookback: int = 60):
     )
     out = []
     for w in store.prune_retired(con, order + scoped, now_ms):
-        r = compute(w, store.samples_for(con, w), now_ms, lookback_min=lookback)
+        rows = store.samples_for(con, w, since_ts=now_ms - config.HISTORY_MS)
+        r = compute(w, rows, now_ms, lookback_min=lookback)
         if r:
             out.append(r)
     return out
-
-
-def freshen(con, args) -> None:
-    """Best-effort top-up before display; never crashes the reader."""
-    if getattr(args, "no_poll", False):
-        return
-    interval = getattr(args, "interval", None) or config.DEFAULT_INTERVAL
-    try:
-        poller.poll_once(con, interval * 1000)
-    except Exception:
-        pass
 
 
 # ---------- renderers ----------
@@ -130,19 +125,74 @@ def render_section(r, now_ms: int, col: int) -> str:
 
 def render_table(rlist, now_ms: int) -> str:
     if not rlist:
-        return "no data yet — run `climit daemon` (or `climit poll`) to collect samples."
+        return "no data yet. Run Claude Code, or check `systemctl --user status climit.timer`."
     col = _col_width()
     return "\n\n".join(render_section(r, now_ms, col) for r in rlist)
 
 
-def render_statusline(rlist, now_ms: int) -> str:
+def render_statusline(rlist, now_ms: int, color: bool | None = None) -> str:
+    """Compact one-line summary, e.g. `5h 31% 2.1/h 1h25m · wk 74% 0.4/h 9h34m`."""
     if not rlist:
         return "climit: no data"
-    parts, warn = [], False
+    parts = []
     for r in rlist:
-        parts.append(f"{config.short_label(r.window)} {r.util:.0f}%·{r.per_hour:.1f}/h")
-        warn = warn or r.will_exhaust_before_reset
-    return ("⚠ " if warn else "") + "  ".join(parts)
+        seg = [config.short_label(r.window), _c(f"{_util_code(r.util)};1", f"{r.util:.0f}%", color)]
+        if r.will_exhaust_before_reset:
+            seg.insert(0, _c("31;1", "⚠", color))
+        # Idle windows show 0.0/h forever; drop it so the busy ones stand out.
+        if r.per_hour >= 0.05:
+            seg.append(_c("2", f"{r.per_hour:.1f}/h", color))
+        if r.reset_ts:
+            seg.append(_c("2", fmt_dur(r.reset_ts - now_ms), color))
+        parts.append(" ".join(seg))
+    return _c("2", " · ", color).join(parts)
+
+
+# p10k theme colours (grey context/vcs, purple dir, cyan ahead/behind).
+GREY, PURPLE, CYAN = "38;5;242", "38;2;145;65;172", "38;2;33;144;164"
+
+
+def _git(cwd: str):
+    """(branch, dirty, behind, ahead) for cwd, or None outside a work tree."""
+    try:
+        proc = subprocess.run(
+            ["git", "--no-optional-locks", "-C", cwd, "status", "--porcelain=v2", "--branch"],
+            capture_output=True, text=True, timeout=1, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode:
+        return None
+    oid, branch, dirty, ahead, behind = "", "", False, 0, 0
+    for line in proc.stdout.splitlines():
+        if line.startswith("# branch.oid "):
+            oid = line.split()[2]
+        elif line.startswith("# branch.head "):
+            branch = line.split(maxsplit=2)[2]
+        elif line.startswith("# branch.ab "):
+            a, b = line.split()[2:4]
+            ahead, behind = int(a), -int(b)
+        elif not line.startswith("#"):
+            dirty = True
+    if branch == "(detached)":
+        branch = "@" + oid[:8]
+    return branch, dirty, behind, ahead
+
+
+def render_prompt(payload, rlist, now_ms: int) -> str:
+    """Claude Code status line: user@host, dir, git state; usage windows on a second line."""
+    payload = payload if isinstance(payload, dict) else {}
+    cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
+    home = str(config.HOME)
+    shown = "~" + cwd[len(home):] if cwd == home or cwd.startswith(home + "/") else cwd
+    host = socket.gethostname().split(".")[0]
+    parts = [_c(GREY, f"{getpass.getuser()}@{host}", True), _c(PURPLE, shown, True)]
+    git = _git(cwd)
+    if git:
+        branch, dirty, behind, ahead = git
+        arrows = ("⇣" if behind else "") + ("⇡" if ahead else "")
+        parts.append(_c(GREY, branch + ("*" if dirty else ""), True) + (_c(CYAN, arrows, True) if arrows else ""))
+    return " ".join(parts) + "\n" + render_statusline(rlist, now_ms, color=True)
 
 
 def cross_metric(rlist):
@@ -194,7 +244,6 @@ def render_json(rlist, now_ms: int) -> str:
 # ---------- commands ----------
 def cmd_status(args) -> int:
     con = store.connect()
-    freshen(con, args)
     now = _now_ms()
     rlist = collect(con, now, lookback=args.lookback)
     if args.json:
@@ -215,7 +264,6 @@ def cmd_watch(args) -> int:
     refresh = max(2, args.refresh)
     try:
         while True:
-            freshen(con, args)
             now = _now_ms()
             rlist = collect(con, now, lookback=args.lookback)
             sys.stdout.write("\033[2J\033[H")
@@ -232,27 +280,41 @@ def cmd_watch(args) -> int:
         return 0
 
 
+def cmd_statusline(args) -> int:
+    payload = {}
+    if not sys.stdin.isatty():
+        try:
+            payload = _json.load(sys.stdin)
+        except ValueError:
+            pass
+    now = _now_ms()
+    con = store.connect()
+    # An idle session keeps its last rate_limits; once that window has reset they are history.
+    windows = {
+        k: w for k, w in sources.parse_statusline(payload).items()
+        if (to_ms(w["resets_at"]) or now + 1) > now
+    }
+    if windows:
+        store.record(con, now, windows, "statusline")
+    print(render_prompt(payload, collect(con, now), now))
+    return 0
+
+
 def cmd_poll(args) -> int:
     con = store.connect()
-    src, n = poller.poll_once(con, (args.interval or config.DEFAULT_INTERVAL) * 1000)
-    print(f"{src} (+{n} rows)")
-    return 1 if src.startswith("error") else 0
-
-
-def cmd_daemon(args) -> int:
-    alert = None
+    status, n = poller.poll_once(con)
+    print(f"{status} (+{n} rows)")
     if not args.no_alerts:
         from . import notify
 
+        now = _now_ms()
         style = notify.AlertStyle(
             urgency=args.alert_urgency,
             timeout=args.alert_timeout,
             transient=args.alert_transient,
         )
-        alert = functools.partial(notify.check, style=style)
-    print(f"climit daemon: interval {args.interval}s · db {config.DB_PATH}")
-    poller.run(interval=args.interval, alert=alert)
-    return 0
+        notify.check(con, collect(con, now), now, style)
+    return 1 if status.startswith("error") else 0
 
 
 def cmd_contrib(args) -> int:
@@ -271,29 +333,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"climit {__version__}")
     sub = p.add_subparsers(dest="cmd")
 
-    def common(sp):
-        sp.add_argument("--interval", type=int, default=config.DEFAULT_INTERVAL,
-                        help=f"min seconds between live fetches (floor {config.MIN_INTERVAL})")
-        sp.add_argument("--no-poll", action="store_true", help="read stored data only; no fetch")
-        sp.add_argument("--lookback", type=int, default=60, help="rate window in minutes")
-
     st = sub.add_parser("status", help="print current usage + rates once and exit")
-    common(st)
+    st.add_argument("--lookback", type=int, default=60, help="rate window in minutes")
     st.add_argument("--json", action="store_true", help="machine-readable output")
     st.add_argument("--statusline", action="store_true", help="one-line output for bars/tmux")
 
-    pl = sub.add_parser("poll", help="run one acquisition cycle and exit")
-    pl.add_argument("--interval", type=int, default=config.DEFAULT_INTERVAL)
+    sub.add_parser(
+        "statusline",
+        help="Claude Code status line: records the rate_limits piped on stdin, prints the line",
+    )
 
-    d = sub.add_parser("daemon", help="run the background poller")
-    d.add_argument("--interval", type=int, default=config.DEFAULT_INTERVAL)
-    d.add_argument("--no-alerts", action="store_true", help="disable notify-send alerts")
-    d.add_argument("--alert-urgency", choices=("low", "normal", "critical"), default="normal",
-                   help="alert urgency; critical never auto-expires on Plasma")
-    d.add_argument("--alert-timeout", type=int, default=10,
-                   help="seconds an alert stays on screen (0 = until dismissed)")
-    d.add_argument("--alert-transient", action="store_true",
-                   help="don't keep alerts in the notification history")
+    pl = sub.add_parser("poll", help="fetch the usage endpoint once (rate-limit safe), then alert")
+    pl.add_argument("--no-alerts", action="store_true", help="disable notify-send alerts")
+    pl.add_argument("--alert-urgency", choices=("low", "normal", "critical"), default="normal",
+                    help="alert urgency; critical never auto-expires on Plasma")
+    pl.add_argument("--alert-timeout", type=int, default=10,
+                    help="seconds an alert stays on screen (0 = until dismissed)")
+    pl.add_argument("--alert-transient", action="store_true",
+                    help="don't keep alerts in the notification history")
 
     cb = sub.add_parser("contrib", help="what's contributing to your usage (local, approximate)")
     cb.add_argument("--hours", type=int, default=24, help="lookback window in hours (default 24)")
@@ -305,15 +362,13 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd is None:  # bare `climit` → live watch dashboard
         args.cmd = "watch"
-        args.no_poll = False
-        args.interval = config.DEFAULT_INTERVAL
         args.lookback = 60
         args.refresh = 10
     return {
         "status": cmd_status,
         "watch": cmd_watch,
+        "statusline": cmd_statusline,
         "poll": cmd_poll,
-        "daemon": cmd_daemon,
         "contrib": cmd_contrib,
     }[args.cmd](args) or 0
 

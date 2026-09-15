@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 
-from . import config, rates, store
+from . import config, store
 
 THRESHOLDS = (80.0, 95.0)
 DEBOUNCE_MS = 30 * 60_000
@@ -50,19 +50,12 @@ def _condition(r) -> str | None:
     return None
 
 
-def check(con, now_ms: int | None = None, style: AlertStyle = DEFAULT_STYLE) -> None:
+def check(con, rlist, now_ms: int | None = None, style: AlertStyle = DEFAULT_STYLE) -> None:
+    """Alert on the windows every surface shows (cli.collect's output)."""
     now = now_ms if now_ms is not None else int(time.time() * 1000)
-    for window in store.prune_retired(
-        con,
-        (w for w in store.windows_present(con) if config.is_known_window(w)),
-        now,
-    ):
-        rows = store.samples_for(con, window)
-        r = rates.compute(window, rows, now)
-        if not r:
-            continue
+    for r in rlist:
         cond = _condition(r)
-        key = f"alert_{window}"
+        key = f"alert_{r.window}"
         if cond is None:
             # cleared → a re-cross re-notifies; _nid kept so it replaces rather than stacks
             store.set_meta(con, key, "")
@@ -73,7 +66,7 @@ def check(con, now_ms: int | None = None, style: AlertStyle = DEFAULT_STYLE) -> 
             continue
         store.set_meta(con, key, cond)
         store.set_meta(con, key + "_ms", now)
-        label = config.label(window)
+        label = config.label(r.window)
         if cond == "exhaust":
             _send(
                 con,

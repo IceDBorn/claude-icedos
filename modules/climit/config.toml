@@ -2,6 +2,7 @@
 interval = 180
 alerts = true
 widget = true
+statusLine = true
 alertUrgency = "normal"
 alertTimeout = 10
 alertTransient = false

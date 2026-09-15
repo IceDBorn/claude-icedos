@@ -76,6 +76,33 @@ class TestRates(unittest.TestCase):
         self.assertAlmostEqual(r.per_hour, 2.0, places=3)  # +2 over 60 min, not 0
         self.assertIsNotNone(r.runway_min)
 
+    def test_sources_rounding_differently_is_not_a_reset(self):
+        # the endpoint says 75, the status line says 74: the peak holds, the rate stays positive
+        reset = "2999-01-01T21:00:00+00:00"
+        rows = [(0, 70.0, reset), (30 * MIN, 75.0, reset), (40 * MIN, 74.0, reset), (60 * MIN, 75.0, reset)]
+        r = compute_ok("seven_day", rows, 60 * MIN, lookback_min=60)
+        self.assertEqual(r.util, 75.0)
+        self.assertAlmostEqual(r.per_hour, 5.0, places=3)
+
+    def test_reset_detected_by_resets_at_moving(self):
+        # a small window (3% -> 1%) resets without a big drop; resets_at moving marks it
+        rows = [(0, 3.0, iso(100 * MIN)), (200 * MIN, 1.0, iso(500 * MIN)), (230 * MIN, 2.0, iso(500 * MIN))]
+        r = compute_ok("five_hour", rows, 230 * MIN, lookback_min=60)
+        self.assertEqual(r.util, 2.0)
+        self.assertAlmostEqual(r.per_hour, 2.0, places=3)  # +1 over the 30 min since the reset
+
+    def test_late_report_from_previous_window_is_ignored(self):
+        rows = [(0, 40.0, iso(100 * MIN)), (110 * MIN, 1.0, iso(400 * MIN)), (120 * MIN, 40.0, iso(100 * MIN))]
+        r = compute_ok("five_hour", rows, 120 * MIN, lookback_min=60)
+        self.assertEqual(r.util, 1.0)
+
+    def test_passed_reset_reads_zero(self):
+        rows = [(0, 60.0, iso(100 * MIN))]
+        r = compute_ok("five_hour", rows, 101 * MIN, lookback_min=60)
+        self.assertEqual(r.util, 0.0)
+        self.assertIsNone(r.reset_ts)
+        self.assertFalse(r.will_exhaust_before_reset)
+
 
 if __name__ == "__main__":
     unittest.main()

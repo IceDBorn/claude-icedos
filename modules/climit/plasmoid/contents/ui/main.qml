@@ -11,7 +11,7 @@ import org.kde.plasma.plasma5support as P5Support
 PlasmoidItem {
     id: root
 
-    // ---- state, filled from `climit status --json --no-poll` ----
+    // ---- state, filled from `climit status --json` ----
     property var allWindows: []       // every window the CLI would print
     property var windows: []          // allowedWindows subset (compact + tooltip)
     property var cross: null          // cli.py:cross_metric, or null when idle
@@ -22,7 +22,7 @@ PlasmoidItem {
 
     // The climit token below is replaced with the absolute nix store path at
     // build time (icedos.nix), so PATH in the plasmashell session is irrelevant.
-    readonly property string climitCmd: "@climit@ status --json --no-poll"
+    readonly property string climitCmd: "@climit@ status --json"
 
     // Only these windows reach the compact face and the tooltip; the per-model
     // Opus/Sonnet weekly windows would swamp a panel item. The popup shows them
@@ -301,7 +301,7 @@ PlasmoidItem {
                 text: root.lastError ? i18n("climit unavailable") : i18n("No data yet")
                 explanation: root.lastError
                              ? root.lastError
-                             : "Start the climit daemon:\nsystemctl --user start climit"
+                             : "Run Claude Code, or start the poll timer:\nsystemctl --user start climit.timer"
             }
 
             ColumnLayout {

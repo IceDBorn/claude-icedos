@@ -21,6 +21,7 @@
         alerts
         keybind
         widget
+        statusLine
         alertUrgency
         alertTimeout
         alertTransient
@@ -31,6 +32,9 @@
         interval = mkNumberOption { default = interval; };
         alerts = mkBoolOption { default = alerts; };
         widget = mkBoolOption { default = widget; };
+
+        # Claude Code status line: prompt segments plus usage; each redraw also records a sample.
+        statusLine = mkBoolOption { default = statusLine; };
 
         # Plasma never expires critical urgency: alertUrgency = "critical" + alertTimeout = 0 is sticky.
         alertUrgency =
@@ -82,12 +86,16 @@
             src = ./src;
             build-system = [ pkgs.python3Packages.setuptools ];
             doCheck = false;
-            # Make notify-send reachable from the systemd user service's PATH.
+            # notify-send for the timer's alerts; git as a fallback for the status line.
             makeWrapperArgs = [
               "--prefix"
               "PATH"
               ":"
               "${lib.makeBinPath [ pkgs.libnotify ]}"
+              "--suffix"
+              "PATH"
+              ":"
+              "${lib.makeBinPath [ pkgs.git ]}"
             ];
             meta = {
               description = "Track Claude usage limits (5h + weekly) and burn rate";
@@ -96,7 +104,7 @@
           };
 
           # KDE Plasma 6 applet rendering `status --json` (store path baked in via
-          # @climit@). --no-poll means it reads the DB the daemon fills; no network.
+          # @climit@). It only reads the DB the timer and status line fill; no network.
           climitPlasmoid = pkgs.stdenvNoCC.mkDerivation {
             pname = "climit-plasmoid";
             version = "0.1.0";
@@ -153,12 +161,15 @@
                 # Add via "Add Widgets", or pin "org.icedos.climit" in icedos.desktop.kde.panel.widgets.
                 home.packages = lib.optional userCfg.widget climitPlasmoid;
 
+                # Live data comes from any running Claude Code via the status line;
+                # this timer keeps samples coming (other clients, idle periods) while the login is valid.
                 systemd.user.services.climit = {
-                  Unit.Description = "climit — Claude usage-limit poller";
+                  Unit.Description = "climit: fetch Claude usage limits once";
 
                   Service = {
+                    Type = "oneshot";
                     ExecStart =
-                      "${climitPkg}/bin/climit daemon --interval ${toString userCfg.interval}"
+                      "${climitPkg}/bin/climit poll"
                       + (
                         if !userCfg.alerts then
                           " --no-alerts"
@@ -167,12 +178,27 @@
                           + " --alert-timeout ${toString userCfg.alertTimeout}"
                           + lib.optionalString userCfg.alertTransient " --alert-transient"
                       );
+                  };
+                };
 
-                    Restart = "on-failure";
-                    RestartSec = 30;
+                systemd.user.timers.climit = {
+                  Unit.Description = "climit: Claude usage-limit poll timer";
+
+                  Timer = {
+                    OnStartupSec = "30s";
+                    OnUnitActiveSec = "${toString userCfg.interval}s";
+                    AccuracySec = "1s";
                   };
 
-                  Install.WantedBy = [ "default.target" ];
+                  Install.WantedBy = [ "timers.target" ];
+                };
+
+                programs.claude-code.settings.statusLine = lib.mkIf userCfg.statusLine {
+                  type = "command";
+                  command = "${climitPkg}/bin/climit statusline";
+                  padding = 0;
+                  # Redraw between model responses so timer samples and reset countdowns show up.
+                  refreshInterval = 60;
                 };
 
                 # Live usage view as a Zed task (bottom terminal dock), when Zed is in use.

@@ -60,8 +60,11 @@ via upstream `programs.peon-ping.claudeCodeIntegration`
 per-user config (`climit`, `claude-review-mcp`) declare
 `icedos.applications.claude-code.users.<name>` themselves.
 
-- `climit` — `…users.<name>.climit` (`interval`, `alerts`, `widget`); the module adds
-  only the nested submodule + its daemon/plasmoid, no `.users` of its own.
+- `climit` — `…users.<name>.climit` (`interval`, `alerts`, `widget`, `statusLine`); the module
+  adds only the nested submodule + its poll timer, plasmoid and Claude Code status line, no
+  `.users` of its own. Every surface reads one SQLite DB, filled by the status line (each
+  redraw) and the timer (`/api/oauth/usage`). climit only reads Claude Code's token and never
+  refreshes it, so logins stay with the claude CLI.
 - `peon-ping` — a **standalone apps module** (`icedos.applications.peon-ping.users`, not part
   of claude-code). It wires its own Claude Code hooks via
   `programs.peon-ping.claudeCodeIntegration`; the audio integration lives in the apps repo.

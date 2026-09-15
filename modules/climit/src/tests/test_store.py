@@ -19,11 +19,18 @@ class TestStore(unittest.TestCase):
     def test_record_and_dedup(self):
         w = {"five_hour": {"util": 10.0, "resets_at": "A"}}
         self.assertEqual(store.record(self.con, 1000, w, "poll"), 1)
-        self.assertEqual(store.record(self.con, 2000, w, "cache"), 0)  # unchanged → skip
+        self.assertEqual(store.record(self.con, 2000, w, "poll"), 0)  # unchanged → skip
         w2 = {"five_hour": {"util": 12.0, "resets_at": "A"}}
         self.assertEqual(store.record(self.con, 3000, w2, "poll"), 1)
         rows = store.samples_for(self.con, "five_hour")
         self.assertEqual([r[1] for r in rows], [10.0, 12.0])
+
+    def test_dedup_is_per_source(self):
+        w = {"five_hour": {"util": 10.0, "resets_at": "A"}}
+        store.record(self.con, 1000, w, "statusline")
+        store.record(self.con, 2000, {"five_hour": {"util": 11.0, "resets_at": "A"}}, "poll")
+        # an idle session redrawing its old numbers adds nothing
+        self.assertEqual(store.record(self.con, 3000, w, "statusline"), 0)
 
     def test_samples_bracket(self):
         for ts, u in [(1000, 10.0), (2000, 12.0), (3000, 15.0)]:

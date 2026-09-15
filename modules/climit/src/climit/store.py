@@ -9,10 +9,11 @@ CREATE TABLE IF NOT EXISTS samples (
   window    TEXT    NOT NULL,   -- five_hour, seven_day, ...
   util      REAL    NOT NULL,   -- 0..100
   resets_at TEXT,               -- ISO-8601 or NULL
-  source    TEXT    NOT NULL,   -- 'cache' | 'poll'
+  source    TEXT    NOT NULL,   -- 'poll' | 'statusline' ('cache' in old rows)
   PRIMARY KEY (ts, window)
 );
 CREATE INDEX IF NOT EXISTS idx_samples_window_ts ON samples(window, ts);
+CREATE INDEX IF NOT EXISTS idx_samples_window_source_ts ON samples(window, source, ts);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -27,20 +28,20 @@ def connect(path=None) -> sqlite3.Connection:
     return con
 
 
-def _latest(con: sqlite3.Connection, window: str):
+def _latest(con: sqlite3.Connection, window: str, source: str):
     return con.execute(
-        "SELECT util, resets_at FROM samples WHERE window=? ORDER BY ts DESC LIMIT 1",
-        (window,),
+        "SELECT util, resets_at FROM samples WHERE window=? AND source=? ORDER BY ts DESC LIMIT 1",
+        (window, source),
     ).fetchone()
 
 
 def record(con: sqlite3.Connection, ts: int, windows: dict, source: str) -> int:
     """Insert one row per window. Skip a window whose (util, resets_at) is
-    unchanged from its last stored row (keeps idle periods from spamming rows).
-    Returns number of rows inserted."""
+    unchanged from the same source's last row, so idle status line redraws and
+    interleaved sources don't spam rows. Returns number of rows inserted."""
     n = 0
     for key, w in windows.items():
-        prev = _latest(con, key)
+        prev = _latest(con, key, source)
         if prev is not None and prev[0] == w["util"] and prev[1] == w["resets_at"]:
             continue
         cur = con.execute(

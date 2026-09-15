@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from climit import config, notify, store
+from climit import cli, config, notify, store
 
 SCOPED_FABLE = config.WEEKLY_SCOPED_PREFIX + "fable"
 
@@ -28,14 +28,14 @@ class TestNotifyCheck(unittest.TestCase):
         now = 1_000_000
         self._sample(now - 40 * 86_400_000, 90.0)
         with mock.patch.object(notify, "_send") as send:
-            notify.check(self.con, now)
+            notify.check(self.con, cli.collect(self.con, now), now)
         send.assert_not_called()
 
     def test_active_high_util_window_alerts(self):
         now = 1_000_000
         self._sample(now, 90.0)
         with mock.patch.object(notify, "_send") as send:
-            notify.check(self.con, now)
+            notify.check(self.con, cli.collect(self.con, now), now)
         send.assert_called_once()
 
 

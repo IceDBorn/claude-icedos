@@ -1,9 +1,29 @@
 import unittest
 
 from climit import config
-from climit.sources import _parse_windows
+from climit.sources import _parse_windows, parse_statusline
 
 RESET = "2026-08-08T19:50:00+00:00"
+
+
+class TestParseStatusline(unittest.TestCase):
+    def test_rate_limits_become_windows(self):
+        payload = {"rate_limits": {
+            "five_hour": {"used_percentage": 31, "resets_at": 1789473000},
+            "seven_day": {"used_percentage": 74.5, "resets_at": 1789506000},
+            "spend_limit": {"used_percentage": 10, "resets_at": 1789506000},
+        }}
+        out = parse_statusline(payload)
+        self.assertEqual(sorted(out), ["five_hour", "seven_day"])
+        self.assertEqual(out["five_hour"], {"util": 31.0, "resets_at": "2026-09-15T11:50:00+00:00"})
+        self.assertEqual(out["seven_day"]["util"], 74.5)
+
+    def test_missing_or_malformed(self):
+        self.assertEqual(parse_statusline({}), {})
+        self.assertEqual(parse_statusline([]), {})
+        self.assertEqual(parse_statusline({"rate_limits": {"five_hour": {"resets_at": 1}}}), {})
+        out = parse_statusline({"rate_limits": {"five_hour": {"used_percentage": 3}}})
+        self.assertEqual(out, {"five_hour": {"util": 3.0, "resets_at": None}})
 
 
 class TestParseWindows(unittest.TestCase):

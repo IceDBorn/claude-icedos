@@ -1,18 +1,18 @@
 """Two data sources for usage windows, identical output shape.
 
-read_cache()  — parse ~/.claude.json cachedUsageUtilization (free, offline, no 429;
-                fresh only while a Claude session is running).
-fetch_live()  — GET the OAuth usage endpoint (authoritative; rate-limited).
+parse_statusline() — the rate_limits object Claude Code pipes to status line
+                     commands (free, fresh after every model response).
+fetch_live()       — GET the OAuth usage endpoint (authoritative, sees every
+                     client; rate-limited).
 
-Both return (windows, fetched_at_ms) where
-    windows = { window_key: {"util": float, "resets_at": str|None} }
+Both return windows = { window_key: {"util": float, "resets_at": str|None} }.
 """
 import json
-import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
-from . import auth, config
+from . import config
 
 
 class FetchError(Exception):
@@ -21,21 +21,14 @@ class FetchError(Exception):
         self.status = status
 
 
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
 def _parse_windows(util: dict) -> dict:
-    """Pick only real burn windows from a utilization payload.
+    """Pick only real burn windows from a usage endpoint payload.
 
-    Works for both cache and live payloads. The utilization dict carries the
-    stable window objects ({utilization, resets_at}), a "limits" array, and a
-    dumping ground of internal model-codename keys (nimbus_quill, ...) that are
-    NOT windows. We keep only the stable config.KNOWN_WINDOW_KEYS (recording a
-    null resets_at as-is, so a post-reset zero sample is never dropped), and
-    additionally synthesize per-model weekly windows from the limits[] array
-    (kind == "weekly_scoped", keyed by scope.model.display_name), mirroring
-    Claude Code's own k1t handling.
+    The payload carries the stable window objects ({utilization, resets_at}), a
+    "limits" array, and internal model-codename keys (nimbus_quill, ...) that are
+    NOT windows. We keep only config.KNOWN_WINDOW_KEYS (recording a null
+    resets_at as-is, so a post-reset zero sample is never dropped), and
+    synthesize per-model weekly windows from limits[] (kind == "weekly_scoped").
     """
     out: dict = {}
     if not isinstance(util, dict):
@@ -86,34 +79,33 @@ def _scoped_windows(limits) -> dict:
     return out
 
 
-def read_cache():
-    """Return (windows, fetched_at_ms) from the local cache, or None if unusable."""
-    try:
-        with open(config.CLAUDE_JSON) as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    cache = data.get("cachedUsageUtilization")
-    if not isinstance(cache, dict):
-        return None
-    windows = _parse_windows(cache.get("utilization") or {})
-    fetched = cache.get("fetchedAtMs")
-    if not windows or fetched is None:
-        return None
-    return windows, int(fetched)
+def parse_statusline(payload) -> dict:
+    """Windows from a status line payload's rate_limits (resets_at is epoch seconds there)."""
+    limits = payload.get("rate_limits") if isinstance(payload, dict) else None
+    out: dict = {}
+    if not isinstance(limits, dict):
+        return out
+    for key in config.KNOWN_WINDOW_KEYS:
+        val = limits.get(key)
+        if not isinstance(val, dict):
+            continue
+        try:
+            util = float(val["used_percentage"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        reset = val.get("resets_at")
+        if isinstance(reset, (int, float)) and not isinstance(reset, bool):
+            reset = datetime.fromtimestamp(reset, tz=timezone.utc).isoformat()
+        else:
+            reset = None
+        out[key] = {"util": util, "resets_at": reset}
+    return out
 
 
-def fetch_live():
-    """GET the usage endpoint. Returns (windows, now_ms). Raises FetchError."""
-    token = auth.get_access_token()
-    url = config.API_BASE + config.USAGE_PATH
-    windows = _do_fetch(url, token, retried=False)
-    return windows, _now_ms()
-
-
-def _do_fetch(url: str, token: str, retried: bool) -> dict:
+def fetch_live(token: str) -> dict:
+    """GET the usage endpoint. Returns windows. Raises FetchError."""
     req = urllib.request.Request(
-        url,
+        config.API_BASE + config.USAGE_PATH,
         method="GET",
         headers={
             # Mirrors Claude Code's fetchUtilization exactly: Bearer + oauth beta +
@@ -128,10 +120,6 @@ def _do_fetch(url: str, token: str, retried: bool) -> dict:
         with urllib.request.urlopen(req, timeout=config.HTTP_TIMEOUT) as r:
             data = json.load(r)
     except urllib.error.HTTPError as e:
-        if e.code == 401 and not retried:
-            # token likely expired mid-flight — force a refresh and retry once
-            token = auth.get_access_token(force_refresh=True)
-            return _do_fetch(url, token, retried=True)
         raise FetchError(f"usage fetch HTTP {e.code}", status=e.code) from e
     except urllib.error.URLError as e:
         raise FetchError(f"usage fetch failed: {e.reason}") from e

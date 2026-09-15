@@ -1,11 +1,17 @@
 """Reset-aware burn-rate math over the stored sample series.
 
-Rate is a windowed average: (util_now - util_at(t_start)) / elapsed, where
-t_start = max(now - lookback, last-reset boundary). This naturally decays to
-zero when usage stops and never goes negative across a window reset.
+Rate is a windowed average: (peak_now - peak_at(t_start)) / elapsed, where
+t_start = max(now - lookback, start of the current window). Usage inside a window
+never goes down, so the running peak absorbs sources that round differently
+(the endpoint can say 75 while the status line says 74).
 """
 from dataclasses import dataclass
 from datetime import datetime
+
+# A window starts when resets_at moves later by more than this; sub-second jitter doesn't count.
+RESET_SHIFT_MS = 10 * 60_000
+# Without resets_at on both rows, a drop this far below the window's peak marks a reset.
+RESET_DROP = 5.0
 
 
 def parse_iso(s):
@@ -13,37 +19,39 @@ def parse_iso(s):
         return None
     try:
         return datetime.fromisoformat(s)
-    except ValueError:
+    except (TypeError, ValueError):
         try:
             return datetime.fromisoformat(s.replace("Z", "+00:00"))
-        except ValueError:
+        except (TypeError, ValueError, AttributeError):
             return None
 
 
-def _reset_boundary_ts(rows):
-    """ts marking the start of the current window: the sample right after the
-    most recent reset. A reset shows up as a utilization DROP (a fresh window
-    starts near 0). The endpoint's resets_at jitters sub-second between polls
-    (e.g. 20:59:59.9 vs 21:00:00.1 around the same boundary), so it is NOT a
-    reliable reset signal and is deliberately ignored here."""
-    boundary = rows[0][0]
-    prev_util = rows[0][1]
-    for ts, util, _reset in rows[1:]:
-        if util < prev_util - 0.5:
-            boundary = ts
-        prev_util = util
-    return boundary
+def to_ms(resets_at):
+    """ISO-8601 reset time to unix ms, or None."""
+    dt = parse_iso(resets_at)
+    return int(dt.timestamp() * 1000) if dt else None
 
 
-def _util_at(rows, t):
-    """Carry-forward utilization at time t (value of last sample with ts<=t)."""
-    val = rows[0][1]
-    for ts, util, _ in rows:
-        if ts <= t:
-            val = util
+def _window_rows(rows):
+    """Rows of the current window, minus late reports from the previous one."""
+    start, peak, reset = 0, rows[0][1], to_ms(rows[0][2])
+    stale = set()
+    for i in range(1, len(rows)):
+        _ts, util, resets_at = rows[i]
+        r = to_ms(resets_at)
+        if r is not None and reset is not None:
+            if r < reset - RESET_SHIFT_MS:
+                stale.add(i)  # a late report from the previous window (an idle session's redraw)
+                continue
+            new_window = r > reset + RESET_SHIFT_MS
         else:
-            break
-    return val
+            new_window = util < peak - RESET_DROP
+        if new_window:
+            start, peak, reset = i, util, r
+        else:
+            peak = max(peak, util)
+            reset = reset if reset is not None else r
+    return [row for i, row in enumerate(rows) if i >= start and i not in stale]
 
 
 @dataclass
@@ -67,16 +75,22 @@ def compute(window, rows, now_ms, lookback_min=60, stale_after_min=30):
     """rows: (ts, util, resets_at) ascending. Returns Rate or None if no data."""
     if not rows:
         return None
-    latest_ts, util_now, resets_at = rows[-1]
-    boundary = _reset_boundary_ts(rows)
-    t_start = max(now_ms - lookback_min * 60_000, boundary)
-    util_start = _util_at(rows, t_start)
+    latest_ts = rows[-1][0]
+    stale = (now_ms - latest_ts) > stale_after_min * 60_000
+    win = _window_rows(rows)
+    resets_at = next((r for _, _, r in reversed(win) if r), None)
+    reset_ts = to_ms(resets_at)
+
+    # The window reset with no sample since: usage is back to zero.
+    if reset_ts is not None and now_ms >= reset_ts:
+        return Rate(window, 0.0, None, 0.0, 0.0, 0.0, 0.0, None, None, None, False, stale, latest_ts)
+
+    util_now = max(u for _, u, _ in win)
+    t_start = max(now_ms - lookback_min * 60_000, win[0][0])
+    util_start = max((u for ts, u, _ in win if ts <= t_start), default=win[0][1])
     span_min = max((now_ms - t_start) / 60_000, 1e-9)
     per_min = max((util_now - util_start) / span_min, 0.0)
     per_hour, per_8h, per_day = per_min * 60, per_min * 480, per_min * 1440
-
-    reset_dt = parse_iso(resets_at)
-    reset_ts = int(reset_dt.timestamp() * 1000) if reset_dt else None
 
     remaining = max(100.0 - util_now, 0.0)
     if per_min > 1e-6:
@@ -87,7 +101,6 @@ def compute(window, rows, now_ms, lookback_min=60, stale_after_min=30):
         exhaust_ts = None
 
     will = bool(exhaust_ts is not None and reset_ts is not None and exhaust_ts < reset_ts)
-    stale = (now_ms - latest_ts) > stale_after_min * 60_000
     return Rate(
         window=window,
         util=util_now,
