@@ -2,7 +2,7 @@
 
 Rate is a windowed average: (peak_now - peak_at(t_start)) / elapsed, where
 t_start = max(now - lookback, start of the current window). Usage inside a window
-never goes down, so the running peak absorbs sources that round differently
+rarely goes down, so the running peak absorbs sources that round differently
 (the endpoint can say 75 while the status line says 74).
 """
 from dataclasses import dataclass
@@ -32,12 +32,25 @@ def to_ms(resets_at):
     return int(dt.timestamp() * 1000) if dt else None
 
 
+def _is_poll(row):
+    # rows without a source (tests, old callers) count as authoritative
+    return len(row) < 4 or row[3] == "poll"
+
+
 def _window_rows(rows):
-    """Rows of the current window, minus late reports from the previous one."""
+    """Rows of the current window, minus late reports from the previous one.
+
+    A poll well below the peak starts a new segment even with resets_at unchanged
+    (weekly usage can be credited back); status-line rows above the last poll after
+    that are idle sessions redrawing pre-drop numbers.
+    """
     start, peak, reset = 0, rows[0][1], to_ms(rows[0][2])
+    last_poll = rows[0][1] if _is_poll(rows[0]) else None
+    dropped = False
     stale = set()
     for i in range(1, len(rows)):
-        _ts, util, resets_at = rows[i]
+        util, resets_at = rows[i][1], rows[i][2]
+        poll = _is_poll(rows[i])
         r = to_ms(resets_at)
         if r is not None and reset is not None:
             if r < reset - RESET_SHIFT_MS:
@@ -46,6 +59,15 @@ def _window_rows(rows):
             new_window = r > reset + RESET_SHIFT_MS
         else:
             new_window = util < peak - RESET_DROP
+        if new_window:
+            dropped = False
+        elif poll and util < peak - RESET_DROP:
+            new_window = dropped = True
+        elif not poll and dropped and last_poll is not None and util > last_poll + RESET_DROP:
+            stale.add(i)
+            continue
+        if poll:
+            last_poll = util
         if new_window:
             start, peak, reset = i, util, r
         else:
@@ -78,16 +100,16 @@ def compute(window, rows, now_ms, lookback_min=60, stale_after_min=30):
     latest_ts = rows[-1][0]
     stale = (now_ms - latest_ts) > stale_after_min * 60_000
     win = _window_rows(rows)
-    resets_at = next((r for _, _, r in reversed(win) if r), None)
+    resets_at = next((row[2] for row in reversed(win) if row[2]), None)
     reset_ts = to_ms(resets_at)
 
     # The window reset with no sample since: usage is back to zero.
     if reset_ts is not None and now_ms >= reset_ts:
         return Rate(window, 0.0, None, 0.0, 0.0, 0.0, 0.0, None, None, None, False, stale, latest_ts)
 
-    util_now = max(u for _, u, _ in win)
+    util_now = max(row[1] for row in win)
     t_start = max(now_ms - lookback_min * 60_000, win[0][0])
-    util_start = max((u for ts, u, _ in win if ts <= t_start), default=win[0][1])
+    util_start = max((row[1] for row in win if row[0] <= t_start), default=win[0][1])
     span_min = max((now_ms - t_start) / 60_000, 1e-9)
     per_min = max((util_now - util_start) / span_min, 0.0)
     per_hour, per_8h, per_day = per_min * 60, per_min * 480, per_min * 1440

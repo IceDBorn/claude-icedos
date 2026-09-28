@@ -96,6 +96,27 @@ class TestRates(unittest.TestCase):
         r = compute_ok("five_hour", rows, 120 * MIN, lookback_min=60)
         self.assertEqual(r.util, 1.0)
 
+    def test_poll_drop_with_same_resets_at_starts_new_segment(self):
+        # weekly usage credited back (63 -> 19) while resets_at holds; idle sessions keep redrawing 63
+        reset = "2999-01-01T21:00:00+00:00"
+        rows = [
+            (0, 63.0, reset, "poll"),
+            (10 * MIN, 63.0, reset, "statusline"),
+            (20 * MIN, 19.0, reset, "poll"),
+            (30 * MIN, 63.0, reset, "statusline"),
+            (40 * MIN, 21.0, reset, "statusline"),
+            (60 * MIN, 22.0, reset, "poll"),
+        ]
+        r = compute_ok("seven_day", rows, 60 * MIN, lookback_min=60)
+        self.assertEqual(r.util, 22.0)
+        self.assertAlmostEqual(r.per_hour, 4.5, places=3)  # +3 over the 40 min since the drop
+
+    def test_statusline_drop_alone_is_not_a_reset(self):
+        # an idle session's old, lower numbers must not reset the peak
+        reset = "2999-01-01T21:00:00+00:00"
+        rows = [(0, 60.0, reset, "poll"), (30 * MIN, 18.0, reset, "statusline")]
+        self.assertEqual(compute_ok("seven_day", rows, 30 * MIN).util, 60.0)
+
     def test_passed_reset_reads_zero(self):
         rows = [(0, 60.0, iso(100 * MIN))]
         r = compute_ok("five_hour", rows, 101 * MIN, lookback_min=60)

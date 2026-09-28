@@ -54,19 +54,19 @@ def record(con: sqlite3.Connection, ts: int, windows: dict, source: str) -> int:
 
 
 def samples_for(con: sqlite3.Connection, window: str, since_ts: int | None = None):
-    """Rows (ts, util, resets_at) ascending. If since_ts given, also include the
+    """Rows (ts, util, resets_at, source) ascending. If since_ts given, also include the
     one bracketing row just before it so a rate window always has an anchor."""
     if since_ts is None:
         return con.execute(
-            "SELECT ts, util, resets_at FROM samples WHERE window=? ORDER BY ts",
+            "SELECT ts, util, resets_at, source FROM samples WHERE window=? ORDER BY ts",
             (window,),
         ).fetchall()
     rows = con.execute(
-        "SELECT ts, util, resets_at FROM samples WHERE window=? AND ts>=? ORDER BY ts",
+        "SELECT ts, util, resets_at, source FROM samples WHERE window=? AND ts>=? ORDER BY ts",
         (window, since_ts),
     ).fetchall()
     bracket = con.execute(
-        "SELECT ts, util, resets_at FROM samples WHERE window=? AND ts<? ORDER BY ts DESC LIMIT 1",
+        "SELECT ts, util, resets_at, source FROM samples WHERE window=? AND ts<? ORDER BY ts DESC LIMIT 1",
         (window, since_ts),
     ).fetchone()
     if bracket is not None:
