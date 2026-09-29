@@ -42,6 +42,13 @@ PlasmoidItem {
         return s + "s";
     }
 
+    // Mirrors cli.py:runway_ms - a window already at 100% has no countdown to show.
+    function runwayMs(r) {
+        if (!r.will_exhaust_before_reset || !r.runway_min) return -1;
+        var ms = r.runway_min * 60000;
+        return ms >= 1000 ? ms : -1;
+    }
+
     function utilColor(u) {
         if (u < 50) return Kirigami.Theme.positiveTextColor;   // green
         if (u < 80) return Kirigami.Theme.neutralTextColor;    // amber
@@ -85,17 +92,29 @@ PlasmoidItem {
         return Plasmoid.configuration.showAllWindowsInPopup ? allWindows : windows;
     }
 
-    // reset countdown for a row, NaN when the window has no reset timestamp
-    function resetIn(r) {
-        return r.reset_ts ? (r.reset_ts - root.nowMs) : NaN;
+    // Adjacent rows sharing a reset (cli.py:group_by_reset) as [{reset_ts, rows}].
+    // Older climit JSON has no reset_group, so each row then stands alone.
+    function groupRows(rows) {
+        var groups = [];
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i], g = groups[groups.length - 1];
+            if (g && r.reset_group !== undefined && g.rows[0].reset_group === r.reset_group)
+                g.rows.push(r);
+            else
+                groups.push({ reset_ts: r.reset_ts, rows: [r] });
+        }
+        return groups;
     }
 
-    function runwayText(r) {
-        return r.runway_min === null ? "∞" : fmtDur(r.runway_min * 60000);
+    // verb agrees with the group, same as cli.py:_reset_word
+    function resetText(g) {
+        if (!g.reset_ts)
+            return "no reset";
+        return (g.rows.length === 1 ? "resets in " : "reset in ") + fmtDur(g.reset_ts - root.nowMs);
     }
 
     // ---- per-window metric strip, same numbers cli.py:render_table prints ----
-    readonly property var metricLabels: ["%/min", "%/hr", "%/8h", "%/day", "ends in", "resets in"]
+    readonly property var metricLabels: ["%/min", "%/hr", "%/8h", "%/day", "ends in"]
 
     function metricValue(r, i) {
         switch (i) {
@@ -103,14 +122,17 @@ PlasmoidItem {
             case 1: return r.per_hour.toFixed(1);
             case 2: return r.per_8h.toFixed(1);
             case 3: return r.per_day.toFixed(1);
-            case 4: return (r.will_exhaust_before_reset ? "⚠ " : "") + runwayText(r);
-            case 5: var m = resetIn(r); return isNaN(m) ? "—" : fmtDur(m);
+            // runway past the reset never happens, so only a projected cap shows
+            case 4: {
+                var ms = root.runwayMs(r);
+                return ms >= 0 ? "⚠ " + fmtDur(ms) : "—";
+            }
         }
         return "";
     }
 
     function metricColor(r, i) {
-        return (i === 4 && r.will_exhaust_before_reset)
+        return (i === 4 && root.runwayMs(r) >= 0)
                ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor;
     }
 
@@ -194,13 +216,16 @@ PlasmoidItem {
     toolTipMainText: "climit"
     toolTipSubText: {
         if (!root.windows.length)
-            return root.lastError ? root.lastError : "no data yet";
-        var lines = root.windows.map(function (r) {
-            var reset = root.resetIn(r);
-            return labelFor(r.window) + "  " + Math.round(r.util) + "% · "
-                 + r.per_hour.toFixed(1) + "%/h"
-                 + (r.runway_min === null ? "" : " · ends " + root.runwayText(r))
-                 + (isNaN(reset) ? "" : " · resets " + root.fmtDur(reset));
+            return root.lastError ? root.lastError : "no usage yet";
+        var lines = [];
+        root.groupRows(root.windows).forEach(function (g) {
+            lines.push(root.resetText(g));
+            g.rows.forEach(function (r) {
+                lines.push("  " + labelFor(r.window) + "  " + Math.round(r.util) + "% · "
+                           + r.per_hour.toFixed(1) + "%/h"
+                           + (root.runwayMs(r) >= 0
+                              ? " · ends " + root.fmtDur(root.runwayMs(r)) : ""));
+            });
         });
         if (root.anyWarn)
             lines.unshift("⚠ projected to cap before reset");
@@ -265,14 +290,14 @@ PlasmoidItem {
     }
 
     // ---- full (popup / desktop) face ----
-    // One section per window — heading + used%, a full-width usage bar, then the
-    // metric strip (%/min · %/hr · %/8h · %/day · ends in · resets in). Same
-    // numbers as cli.py:render_table, stacked instead of squeezed into one row,
-    // with render_cross's exchange line in the footer.
+    // Windows sharing a reset sit under one "reset in" heading; each gets a heading
+    // + used%, a full-width usage bar, then the metric strip. Same numbers as
+    // cli.py:render_table, with render_cross's exchange line in the footer.
     fullRepresentation: PlasmaExtras.Representation {
         id: rep
 
         readonly property var rows: root.popupWindows()
+        readonly property var groups: root.groupRows(rows)
         readonly property real cellFont: Kirigami.Theme.smallFont.pointSize
 
         Layout.minimumWidth: Kirigami.Units.gridUnit * 22
@@ -281,7 +306,7 @@ PlasmoidItem {
         // footer out and it overlaps the last section instead of sitting under it.
         readonly property real chromeHeight: footerBar.implicitHeight + topPadding + bottomPadding
                                              + Kirigami.Units.smallSpacing * 2
-        // floor keeps the "no data yet" placeholder readable when there are no rows
+        // floor keeps the "no usage yet" placeholder readable when there are no rows
         Layout.minimumHeight: Math.max(Kirigami.Units.gridUnit * 8,
                                        sections.implicitHeight + chromeHeight)
         Layout.preferredHeight: Layout.minimumHeight
@@ -298,7 +323,7 @@ PlasmoidItem {
                 width: parent.width - Kirigami.Units.gridUnit * 4
                 visible: rep.rows.length === 0
                 iconName: "speedometer"
-                text: root.lastError ? i18n("climit unavailable") : i18n("No data yet")
+                text: root.lastError ? i18n("climit unavailable") : i18n("No usage yet")
                 explanation: root.lastError
                              ? root.lastError
                              : "Run Claude Code, or start the poll timer:\nsystemctl --user start climit.timer"
@@ -312,105 +337,136 @@ PlasmoidItem {
                 spacing: Kirigami.Units.largeSpacing
 
                 Repeater {
-                    model: rep.rows
+                    model: rep.groups
 
                     delegate: ColumnLayout {
-                        id: section
+                        id: group
 
-                        readonly property var win: modelData
+                        readonly property var g: modelData
 
                         Layout.fillWidth: true
-                        // leftover height is shared between the sections rather
-                        // than pooling at the bottom of the popup
                         Layout.fillHeight: true
                         spacing: Kirigami.Units.smallSpacing
-                        opacity: section.win.stale ? 0.5 : 1.0
 
-                        Kirigami.Separator {
-                            Layout.fillWidth: true
-                            visible: index > 0
-                            opacity: 0.3
-                        }
-
-                        // heading row: window name (+ ·stale / cap warning) and used%
+                        // group heading: the shared reset countdown, once per group
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: Kirigami.Units.smallSpacing
 
-                            Kirigami.Heading {
-                                level: 4
-                                // prefer the CLI's own label (weekly_scoped windows and
-                                // any future key) so panel and CLI never diverge; fall
-                                // back to labelFor for label-less JSON from older climit
-                                text: section.win.label || root.labelFor(section.win.window)
-                            }
                             PlasmaComponents.Label {
-                                visible: section.win.stale
-                                text: "·stale"
-                                opacity: 0.7
+                                text: root.resetText(group.g)
+                                opacity: 0.6
                                 font.pointSize: rep.cellFont
                             }
-                            Item { Layout.fillWidth: true }
-                            PlasmaComponents.Label {
-                                visible: section.win.will_exhaust_before_reset
-                                text: "⚠ hits cap before reset"
-                                color: Kirigami.Theme.negativeTextColor
-                                font.pointSize: rep.cellFont
-                            }
-                            Kirigami.Heading {
-                                level: 4
-                                text: Math.round(section.win.util) + "%"
-                                color: root.utilColor(section.win.util)
+                            Kirigami.Separator {
+                                Layout.fillWidth: true
+                                opacity: 0.3
                             }
                         }
 
-                        // usage bar, standing in for the CLI's █░ column
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 0.6)
-                            radius: Kirigami.Units.cornerRadius
-                            color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                           Kirigami.Theme.textColor.b, 0.12)
+                        Repeater {
+                            model: group.g.rows
 
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                height: parent.height
-                                radius: parent.radius
-                                // never collapse to nothing: 1% still shows a sliver
-                                width: Math.max(parent.height,
-                                                parent.width * Math.max(0, Math.min(1, section.win.util / 100)))
-                                color: root.utilColor(section.win.util)
-                            }
-                        }
+                            delegate: ColumnLayout {
+                                id: section
 
-                        // metric strip: labels on top, values under them, evenly
-                        // spread so the row spans the whole popup width
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: root.metricLabels.length
-                            columnSpacing: Kirigami.Units.smallSpacing
-                            rowSpacing: 0
+                                readonly property var win: modelData
 
-                            Repeater {
-                                model: root.metricLabels.length * 2
+                                Layout.fillWidth: true
+                                // leftover height is shared between the sections rather
+                                // than pooling at the bottom of the popup
+                                Layout.fillHeight: true
+                                spacing: Kirigami.Units.smallSpacing
+                                opacity: section.win.stale ? 0.5 : 1.0
 
-                                delegate: PlasmaComponents.Label {
-                                    readonly property int col: index % root.metricLabels.length
-                                    readonly property bool isLabel: index < root.metricLabels.length
-
+                                Kirigami.Separator {
                                     Layout.fillWidth: true
-                                    horizontalAlignment: Text.AlignHCenter
-                                    elide: Text.ElideRight
-                                    font.pointSize: rep.cellFont
-                                    opacity: isLabel ? 0.6 : 1.0
-                                    text: isLabel ? root.metricLabels[col]
-                                                  : root.metricValue(section.win, col)
-                                    color: isLabel ? Kirigami.Theme.textColor
-                                                   : root.metricColor(section.win, col)
+                                    visible: index > 0
+                                    opacity: 0.3
+                                }
+
+                                // heading row: window name (+ ·stale / cap warning) and used%
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    Kirigami.Heading {
+                                        level: 4
+                                        // prefer the CLI's own label (weekly_scoped windows and
+                                        // any future key) so panel and CLI never diverge; fall
+                                        // back to labelFor for label-less JSON from older climit
+                                        text: section.win.label || root.labelFor(section.win.window)
+                                    }
+                                    PlasmaComponents.Label {
+                                        visible: section.win.stale
+                                        text: "·stale"
+                                        opacity: 0.7
+                                        font.pointSize: rep.cellFont
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    PlasmaComponents.Label {
+                                        visible: section.win.will_exhaust_before_reset
+                                        text: "⚠ hits cap before reset"
+                                        color: Kirigami.Theme.negativeTextColor
+                                        font.pointSize: rep.cellFont
+                                    }
+                                    Kirigami.Heading {
+                                        level: 4
+                                        text: Math.round(section.win.util) + "%"
+                                        color: root.utilColor(section.win.util)
+                                    }
+                                }
+
+                                // usage bar, standing in for the CLI's █░ column
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 0.6)
+                                    radius: Kirigami.Units.cornerRadius
+                                    color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                                   Kirigami.Theme.textColor.b, 0.12)
+
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        height: parent.height
+                                        radius: parent.radius
+                                        // never collapse to nothing: 1% still shows a sliver
+                                        width: Math.max(parent.height,
+                                                        parent.width * Math.max(0, Math.min(1, section.win.util / 100)))
+                                        color: root.utilColor(section.win.util)
+                                    }
+                                }
+
+                                // metric strip: labels on top, values under them, evenly
+                                // spread so the row spans the whole popup width
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: root.metricLabels.length
+                                    columnSpacing: Kirigami.Units.smallSpacing
+                                    rowSpacing: 0
+
+                                    Repeater {
+                                        model: root.metricLabels.length * 2
+
+                                        delegate: PlasmaComponents.Label {
+                                            readonly property int col: index % root.metricLabels.length
+                                            readonly property bool isLabel: index < root.metricLabels.length
+
+                                            Layout.fillWidth: true
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideRight
+                                            font.pointSize: rep.cellFont
+                                            opacity: isLabel ? 0.6 : 1.0
+                                            text: isLabel ? root.metricLabels[col]
+                                                          : root.metricValue(section.win, col)
+                                            color: isLabel ? Kirigami.Theme.textColor
+                                                           : root.metricColor(section.win, col)
+                                        }
+                                    }
                                 }
                             }
                         }
+
                     }
                 }
             }

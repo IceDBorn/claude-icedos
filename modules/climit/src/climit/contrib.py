@@ -76,48 +76,47 @@ def analyze(
             except OSError:
                 continue
         try:
-            fh = open(path, errors="replace")
-        except OSError:
-            continue
-        with fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = _ts_ms(obj.get("timestamp"))
-                if ts is not None and ts < cutoff:
-                    continue
-                typ = obj.get("type")
-                sid = obj.get("sessionId", "?")
-                if typ == "assistant":
-                    usage = (obj.get("message") or {}).get("usage") or {}
-                    w = _weight(usage)
-                    if w <= 0:
+            with open(path, errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
                         continue
-                    total += w
-                    main += w
-                    sessions[sid][0] += w
-                    if _context(usage) > CONTEXT_HIGH:
-                        ctx_over += w
-                    if obj.get("attributionMcpServer"):
-                        by_mcp[obj["attributionMcpServer"]] += w
-                    if obj.get("attributionSkill"):
-                        by_skill[obj["attributionSkill"]] += w
-                elif typ == "user":
-                    tur = obj.get("toolUseResult")
-                    if isinstance(tur, dict) and tur.get("agentType"):
-                        u = tur.get("usage") or {}
-                        w = _weight(u) if u else float(tur.get("totalTokens", 0) or 0)
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = _ts_ms(obj.get("timestamp"))
+                    if ts is not None and ts < cutoff:
+                        continue
+                    typ = obj.get("type")
+                    sid = obj.get("sessionId", "?")
+                    if typ == "assistant":
+                        usage = (obj.get("message") or {}).get("usage") or {}
+                        w = _weight(usage)
                         if w <= 0:
                             continue
                         total += w
-                        subagent += w
-                        by_agent[tur["agentType"]] += w
-                        sessions[sid][1] += w
+                        main += w
+                        sessions[sid][0] += w
+                        if _context(usage) > CONTEXT_HIGH:
+                            ctx_over += w
+                        if obj.get("attributionMcpServer"):
+                            by_mcp[obj["attributionMcpServer"]] += w
+                        if obj.get("attributionSkill"):
+                            by_skill[obj["attributionSkill"]] += w
+                    elif typ == "user":
+                        tur = obj.get("toolUseResult")
+                        if isinstance(tur, dict) and tur.get("agentType"):
+                            u = tur.get("usage") or {}
+                            w = _weight(u) if u else float(tur.get("totalTokens", 0) or 0)
+                            if w <= 0:
+                                continue
+                            total += w
+                            subagent += w
+                            by_agent[tur["agentType"]] += w
+                            sessions[sid][1] += w
+        except OSError:
+            continue
 
     heavy = sum(m + s for m, s in sessions.values() if (m + s) > 0 and s / (m + s) > 0.5)
     return {

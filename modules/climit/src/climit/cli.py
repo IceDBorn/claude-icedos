@@ -49,22 +49,37 @@ def fmt_dur(ms) -> str:
     return f"{s}s"
 
 
+def runway_ms(r) -> float | None:
+    """Countdown to the cap in ms, or None when there is none worth printing.
+
+    A window already at 100% has a runway of zero, and "ends 0s" says nothing.
+    """
+    if not r.will_exhaust_before_reset or not r.runway_min:
+        return None
+    ms = r.runway_min * 60_000
+    return ms if ms >= 1000 else None
+
+
 def bar(util: float, width: int = 16) -> str:
     filled = max(0, min(width, round(util / 100 * width)))
     return "█" * filled + "░" * (width - filled)
 
 
-# Column labels of the metric strip under each window's bar. Same six numbers the
-# Plasma widget shows, in the same order.
-METRIC_LABELS = ("%/min", "%/hr", "%/8h", "%/day", "ends in", "resets in")
+# Column labels of the metric strip under each window's bar. The reset countdown
+# sits on the group heading instead, see group_by_reset().
+METRIC_LABELS = ("%/min", "%/hr", "%/8h", "%/day", "ends in")
+
+# resets_at jitters between polls, so resets this close count as the same one.
+RESET_GROUP_MS = 60_000
 
 
 def _col_width() -> int:
-    """Width of one metric column; the bar spans all six of them."""
-    try:
-        cols = shutil.get_terminal_size((96, 24)).columns
-    except Exception:
-        cols = 96
+    """Width of one metric column; the bar spans all of them.
+
+    get_terminal_size already falls back to the size we pass when there is no
+    terminal, so no error handling of our own is needed.
+    """
+    cols = shutil.get_terminal_size((96, 24)).columns
     return max(10, min(cols, 108) // len(METRIC_LABELS))
 
 
@@ -85,16 +100,39 @@ def collect(con, now_ms: int, lookback: int = 60):
     return out
 
 
+def shown(rlist):
+    """Windows the views print: 0% ones are hidden. Alerts still get the full list."""
+    return [r for r in rlist if round(r.util)]
+
+
+def group_by_reset(rlist):
+    """Runs of adjacent windows sharing a reset, as [(reset_ts, [Rate, ...]), ...]."""
+    groups = []
+    for r in rlist:
+        last = groups[-1][0] if groups else None
+        if r.reset_ts and last and abs(r.reset_ts - last) <= RESET_GROUP_MS:
+            groups[-1][1].append(r)
+        else:
+            groups.append((r.reset_ts, [r]))
+    return groups
+
+
+def _reset_word(rates) -> str:
+    """Verb agrees with the group: "5h resets in", "wk · Fab reset in"."""
+    return "resets in" if len(rates) == 1 else "reset in"
+
+
 # ---------- renderers ----------
 def _metric_values(r, now_ms: int):
-    runway = "∞" if r.runway_min is None else fmt_dur(r.runway_min * 60_000)
+    # Runway past the reset never happens, so only a projected cap is shown.
+    ms = runway_ms(r)
+    runway = "⚠ " + fmt_dur(ms) if ms is not None else "—"
     return (
         f"{r.per_min:.2f}",
         f"{r.per_hour:.1f}",
         f"{r.per_8h:.1f}",
         f"{r.per_day:.1f}",
-        ("⚠ " if r.will_exhaust_before_reset else "") + runway,
-        fmt_dur(r.reset_ts - now_ms) if r.reset_ts else "—",
+        runway,
     )
 
 
@@ -116,7 +154,7 @@ def render_section(r, now_ms: int, col: int) -> str:
 
     labels = "".join(label.center(col) for label in METRIC_LABELS)
     cells = [v.center(col) for v in _metric_values(r, now_ms)]
-    if r.will_exhaust_before_reset:
+    if runway_ms(r) is not None:
         cells[4] = _c("31", cells[4])
 
     # blank line under the bar, mirroring the widget's spacing
@@ -124,28 +162,42 @@ def render_section(r, now_ms: int, col: int) -> str:
 
 
 def render_table(rlist, now_ms: int) -> str:
+    rlist = shown(rlist)
     if not rlist:
-        return "no data yet. Run Claude Code, or check `systemctl --user status climit.timer`."
+        return "no usage yet. Run Claude Code, or check `systemctl --user status climit.timer`."
     col = _col_width()
-    return "\n\n".join(render_section(r, now_ms, col) for r in rlist)
+    width = col * len(METRIC_LABELS)
+    blocks = []
+    for reset_ts, rates in group_by_reset(rlist):
+        title = f"{_reset_word(rates)} {fmt_dur(reset_ts - now_ms)} " if reset_ts else "no reset "
+        blocks.append(_c("2", title + "─" * max(0, width - len(title))))
+        blocks.append("\n\n".join(render_section(r, now_ms, col) for r in rates))
+    return "\n\n".join(blocks)
 
 
 def render_statusline(rlist, now_ms: int, color: bool | None = None) -> str:
-    """Compact one-line summary, e.g. `5h 31% 2.1/h 1h25m · wk 74% 0.4/h 9h34m`."""
+    """Compact one-line summary, e.g. `5h 31% 2.1/h ends 1h17m resets in 1h25m | wk 74% · opus 12% reset in 2d4h`."""
+    rlist = shown(rlist)
     if not rlist:
-        return "climit: no data"
-    parts = []
-    for r in rlist:
-        seg = [config.short_label(r.window), _c(f"{_util_code(r.util)};1", f"{r.util:.0f}%", color)]
-        if r.will_exhaust_before_reset:
-            seg.insert(0, _c("31;1", "⚠", color))
-        # Idle windows show 0.0/h forever; drop it so the busy ones stand out.
-        if r.per_hour >= 0.05:
-            seg.append(_c("2", f"{r.per_hour:.1f}/h", color))
-        if r.reset_ts:
-            seg.append(_c("2", fmt_dur(r.reset_ts - now_ms), color))
-        parts.append(" ".join(seg))
-    return _c("2", " · ", color).join(parts)
+        return "climit: no usage"
+    groups = []
+    for reset_ts, rates in group_by_reset(rlist):
+        groups.append(_c("2", " · ", color).join(_statusline_segment(r, color) for r in rates))
+        if reset_ts:
+            groups[-1] += " " + _c("2", _reset_word(rates) + " " + fmt_dur(reset_ts - now_ms), color)
+    return _c("2", " | ", color).join(groups)
+
+
+def _statusline_segment(r, color) -> str:
+    seg = [config.short_label(r.window)]
+    if r.will_exhaust_before_reset:
+        seg.insert(0, _c("31;1", "⚠", color))
+    seg.append(_c(f"{_util_code(r.util)};1", f"{r.util:.0f}%", color))
+    if r.per_hour >= 0.05:
+        seg.append(_c("2", f"{r.per_hour:.1f}/h", color))
+    if (ms := runway_ms(r)) is not None:
+        seg.append(_c("31", "ends " + fmt_dur(ms), color))
+    return " ".join(seg)
 
 
 # p10k theme colours (grey context/vcs, purple dir, cyan ahead/behind).
@@ -224,6 +276,9 @@ def render_cross(rlist) -> str | None:
 
 
 def render_json(rlist, now_ms: int) -> str:
+    cross = cross_metric(rlist)
+    rlist = shown(rlist)
+    group_of = {r.window: i for i, (_, rates) in enumerate(group_by_reset(rlist)) for r in rates}
     return _json.dumps(
         {
             "now_ms": now_ms,
@@ -232,10 +287,11 @@ def render_json(rlist, now_ms: int) -> str:
                     **dataclasses.asdict(r),
                     "label": config.label(r.window),
                     "short_label": config.short_label(r.window),
+                    "reset_group": group_of[r.window],
                 }
                 for r in rlist
             ],
-            "cross": cross_metric(rlist),
+            "cross": cross,
         },
         indent=2,
     )
