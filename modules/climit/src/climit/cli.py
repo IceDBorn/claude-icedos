@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from . import __version__, config, poller, sources, store
+from . import __version__, config, poller, sources, speed, store
 from .rates import compute, to_ms
 
 
@@ -232,7 +232,7 @@ def _git(cwd: str):
 
 
 def render_prompt(payload, rlist, now_ms: int) -> str:
-    """Claude Code status line: user@host, dir, git state; usage windows on a second line."""
+    """Claude Code status line: user@host, dir, git state, tok/s; usage windows on a second line."""
     payload = payload if isinstance(payload, dict) else {}
     cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
     home = str(config.HOME)
@@ -244,6 +244,8 @@ def render_prompt(payload, rlist, now_ms: int) -> str:
         branch, dirty, behind, ahead = git
         arrows = ("⇣" if behind else "") + ("⇡" if ahead else "")
         parts.append(_c(GREY, branch + ("*" if dirty else ""), True) + (_c(CYAN, arrows, True) if arrows else ""))
+    if rate := speed.render(payload.get("transcript_path")):
+        parts.append(_c(CYAN, rate, True))
     return " ".join(parts) + "\n" + render_statusline(rlist, now_ms, color=True)
 
 
