@@ -114,6 +114,22 @@ class TestCmdStatusline(unittest.TestCase):
         self.assertIn("31%", out.getvalue())
 
 
+    def test_context_pct(self):
+        self.assertEqual(cli.context_pct({"context_window": {"used_percentage": 42}}), 42.0)
+        self.assertEqual(cli.context_pct({"context_window": {
+            "context_window_size": 200_000,
+            "current_usage": {"input_tokens": 10_000, "output_tokens": 5_000,
+                              "cache_creation_input_tokens": 20_000, "cache_read_input_tokens": 20_000},
+        }}), 25.0)
+        big = {"context_window": {"context_window_size": 1_000_000, "used_percentage": 10,
+                                  "current_usage": {"input_tokens": 100_000}}}
+        self.assertEqual(cli.context_pct(big, 400_000), 25.0)
+        self.assertEqual(cli.context_pct(big, 2_000_000), 10.0)
+        self.assertEqual(cli.context_pct(
+            {"context_window": {"context_window_size": 1_000_000, "used_percentage": 20}}, 400_000), 50.0)
+        self.assertIsNone(cli.context_pct({"context_window": {"used_percentage": None}}))
+        self.assertIsNone(cli.context_pct({}))
+
 
 class TestRenderStatusline(unittest.TestCase):
     def _rate(self, **kw):

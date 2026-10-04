@@ -13,6 +13,9 @@ def _env_path(name: str, default: Path) -> Path:
 # --- credentials (Claude Code's own file, read-only) ---
 CREDS_PATH = _env_path("CLIMIT_CREDS", HOME / ".claude" / ".credentials.json")
 
+# Claude Code settings, read for autoCompactWindow (the status line's context denominator).
+SETTINGS_PATH = _env_path("CLAUDE_CONFIG_DIR", HOME / ".claude") / "settings.json"
+
 # --- our storage (XDG) ---
 _DATA_HOME = _env_path("XDG_DATA_HOME", HOME / ".local" / "share")
 DATA_DIR = _DATA_HOME / "climit"

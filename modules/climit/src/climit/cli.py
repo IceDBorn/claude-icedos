@@ -231,8 +231,36 @@ def _git(cwd: str):
     return branch, dirty, behind, ahead
 
 
+def _auto_compact_window() -> int | None:
+    try:
+        v = _json.loads(config.SETTINGS_PATH.read_text()).get("autoCompactWindow")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return v if isinstance(v, int) and v > 0 else None
+
+
+def context_pct(payload, compact_window: int | None = None) -> float | None:
+    """Context window fill from the status line payload, or None before the first response.
+
+    Measured against min(model window, autoCompactWindow) so 100% means compaction."""
+    ctx = payload.get("context_window") or {}
+    usage, size = ctx.get("current_usage") or {}, ctx.get("context_window_size")
+    pct = ctx.get("used_percentage")
+    if usage:
+        used = sum(usage.get(k) or 0 for k in
+                   ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    elif isinstance(pct, (int, float)) and size:
+        used = pct * size / 100
+    elif isinstance(pct, (int, float)):
+        return float(pct)
+    else:
+        return None
+    limits = [w for w in (size, compact_window) if w]
+    return 100.0 * used / min(limits) if limits else None
+
+
 def render_prompt(payload, rlist, now_ms: int) -> str:
-    """Claude Code status line: user@host, dir, git state, tok/s; usage windows on a second line."""
+    """Claude Code status line: user@host, dir, git state, context fill, tok/s; usage windows on a second line."""
     payload = payload if isinstance(payload, dict) else {}
     cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
     home = str(config.HOME)
@@ -244,6 +272,8 @@ def render_prompt(payload, rlist, now_ms: int) -> str:
         branch, dirty, behind, ahead = git
         arrows = ("⇣" if behind else "") + ("⇡" if ahead else "")
         parts.append(_c(GREY, branch + ("*" if dirty else ""), True) + (_c(CYAN, arrows, True) if arrows else ""))
+    if (ctx := context_pct(payload, _auto_compact_window())) is not None:
+        parts.append(_c(GREY, "ctx ", True) + _c(_util_code(ctx), f"{ctx:.0f}%", True))
     if rate := speed.render(payload.get("transcript_path")):
         parts.append(_c(CYAN, rate, True))
     return " ".join(parts) + "\n" + render_statusline(rlist, now_ms, color=True)
