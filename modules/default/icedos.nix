@@ -195,6 +195,80 @@ in
                 value = fetchMarketplace m;
               }) userCfg.marketplaces
             );
+
+          # Plugin sources must pin a sha so fetchGit stays pure.
+          fetchPluginGit =
+            id: url: src:
+            fetchGit {
+              inherit url;
+              rev = src.sha or (throw "claude-code: plugin '${id}' has no pinned sha in its marketplace entry");
+              allRefs = true;
+            };
+
+          # Builds one enabledPlugins id (`name@marketplace`) from its pinned catalog
+          # entry. The entry is merged into plugin.json because `strict = false`
+          # entries (e.g. the LSP plugins) carry their whole manifest there.
+          buildPlugin =
+            marketplaces: id:
+            let
+              name = head (lib.splitString "@" id);
+              marketplace = marketplaces.${lib.last (lib.splitString "@" id)};
+              catalog = lib.importJSON "${marketplace}/.claude-plugin/marketplace.json";
+              entry = findFirst (
+                p: p.name == name
+              ) (throw "claude-code: plugin '${id}' is not in its marketplace catalog") catalog.plugins;
+              src = entry.source;
+              root =
+                if builtins.isString src then
+                  "${marketplace}/${src}"
+                else if src.source == "url" then
+                  fetchPluginGit id src.url src
+                else if src.source == "github" then
+                  fetchPluginGit id "https://github.com/${src.repo}.git" src
+                else if src.source == "git-subdir" then
+                  "${fetchPluginGit id src.url src}/${src.path}"
+                else
+                  throw "claude-code: plugin '${id}' uses unsupported source '${src.source}'";
+              entryManifest = pkgs.writeText "${name}-entry.json" (
+                builtins.toJSON (
+                  removeAttrs entry [
+                    "source"
+                    "strict"
+                    "category"
+                    "tags"
+                  ]
+                )
+              );
+              # jq `*`: the right side wins, so plugin.json wins unless strict = false.
+              mergeOrder = if entry.strict or true then "$entry $manifest" else "$manifest $entry";
+            in
+            pkgs.runCommand "claude-plugin-${name}" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              cp -r ${root} $out
+              chmod -R u+w $out
+              mkdir -p $out/.claude-plugin
+              manifest=$out/.claude-plugin/plugin.json
+              entry=${entryManifest}
+              [ -f "$manifest" ] || echo '{}' > "$manifest"
+              jq -s '.[0] * .[1]' ${mergeOrder} > plugin.json
+              mv plugin.json "$manifest"
+            '';
+
+          # Enabled plugins from icedos-managed marketplaces become Nix-built
+          # personal plugins; Claude Code never installs them from a store marketplace.
+          renderPlugins =
+            userCfg: enabledPlugins:
+            let
+              marketplaces = renderMarketplaces userCfg;
+              ids = filter (
+                id: enabledPlugins.${id} == true && marketplaces ? ${lib.last (lib.splitString "@" id)}
+              ) (attrNames enabledPlugins);
+            in
+            listToAttrs (
+              map (id: {
+                name = head (lib.splitString "@" id);
+                value = buildPlugin marketplaces id;
+              }) ids
+            );
         in
         {
           # Rule 1 (core/AGENTS.md): fill every normal user so the nested
@@ -265,6 +339,9 @@ in
               in
               mkIf (userCfg != null) {
                 programs.claude-code.marketplaces = renderMarketplaces userCfg;
+                programs.claude-code.plugins = renderPlugins userCfg (
+                  config.programs.claude-code.settings.enabledPlugins or { }
+                );
               }
             )
             (
