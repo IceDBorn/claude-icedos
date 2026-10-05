@@ -200,3 +200,13 @@ class TestRenderStatusline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShortPath(unittest.TestCase):
+    def test_relative_to_project(self):
+        self.assertEqual(cli._short_path("/a/proj", "/a/proj"), "proj")
+        self.assertEqual(cli._short_path("/a/proj/x/y", "/a/proj/"), "proj/x/y")
+
+    def test_outside_project_falls_back(self):
+        self.assertEqual(cli._short_path("/a/projx", "/a/proj"), "/a/projx")
+        self.assertEqual(cli._short_path("/a/b", None), "/a/b")

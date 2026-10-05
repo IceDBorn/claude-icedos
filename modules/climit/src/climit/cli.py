@@ -274,12 +274,21 @@ def model_label(payload) -> str | None:
     return _c(ORANGE, name, True) + (" " + _c(GREY, level, True) if level else "")
 
 
+def _short_path(cwd: str, project: str | None) -> str:
+    """cwd relative to the session's project dir (named by its basename), else ~-shortened."""
+    project = (project or "").rstrip("/")
+    if project and (cwd == project or cwd.startswith(project + "/")):
+        return os.path.basename(project) + cwd[len(project):]
+    home = str(config.HOME)
+    return "~" + cwd[len(home):] if cwd == home or cwd.startswith(home + "/") else cwd
+
+
 def render_prompt(payload, rlist, now_ms: int) -> str:
     """Claude Code status line: dir, git state, model, context fill, tok/s; usage windows on a second line."""
     payload = payload if isinstance(payload, dict) else {}
-    cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
-    home = str(config.HOME)
-    shown = "~" + cwd[len(home):] if cwd == home or cwd.startswith(home + "/") else cwd
+    workspace = payload.get("workspace") or {}
+    cwd = workspace.get("current_dir") or payload.get("cwd") or os.getcwd()
+    shown = _short_path(cwd, workspace.get("project_dir"))
     parts = [_c(PURPLE, shown, True)]
     git = _git(cwd)
     if git:
@@ -292,7 +301,7 @@ def render_prompt(payload, rlist, now_ms: int) -> str:
         parts.append(_c(GREY, "ctx ", True) + _c(_util_code(ctx), f"{ctx:.0f}%", True))
     if rate := speed.render(payload.get("transcript_path")):
         parts.append(_c(CYAN, rate, True))
-    return " ".join(parts) + "\n" + render_statusline(rlist, now_ms, color=True)
+    return _c("2", " | ", True).join(parts) + "\n" + render_statusline(rlist, now_ms, color=True)
 
 
 def cross_metric(rlist):
