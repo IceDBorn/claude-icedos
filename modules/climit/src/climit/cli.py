@@ -173,8 +173,12 @@ def render_table(rlist, now_ms: int) -> str:
     return "\n\n".join(blocks)
 
 
+# Nerd Font glyphs (nf-md-restore, nf-md-timer_sand): time to window reset, projected time to cap.
+RESET_GLYPH, ENDS_GLYPH = "\U000F099B ", "\U000F051F "
+
+
 def render_statusline(rlist, now_ms: int, color: bool | None = None) -> str:
-    """Compact one-line summary, e.g. `5h 31% 2.1/h ends 1h17m resets in 1h25m | wk 74% · opus 12% reset in 2d4h`."""
+    """Compact one-line summary, e.g. `5h 31% 2.1/h 󰔟 1h17m 󰦛 1h25m | wk 74% · opus 12% 󰦛 2d4h`."""
     rlist = shown(rlist)
     if not rlist:
         return "climit: no usage"
@@ -182,7 +186,7 @@ def render_statusline(rlist, now_ms: int, color: bool | None = None) -> str:
     for reset_ts, rates in group_by_reset(rlist):
         groups.append(_c("2", " · ", color).join(_statusline_segment(r, color) for r in rates))
         if reset_ts:
-            groups[-1] += " " + _c("2", _reset_word(rates) + " " + fmt_dur(reset_ts - now_ms), color)
+            groups[-1] += " " + _c("2", RESET_GLYPH + fmt_dur(reset_ts - now_ms), color)
     return _c("2", " | ", color).join(groups)
 
 
@@ -194,7 +198,7 @@ def _statusline_segment(r, color) -> str:
     if r.per_hour >= 0.05:
         seg.append(_c("2", f"{r.per_hour:.1f}/h", color))
     if (ms := runway_ms(r)) is not None:
-        seg.append(_c("31", "ends " + fmt_dur(ms), color))
+        seg.append(_c("31", ENDS_GLYPH + fmt_dur(ms), color))
     return " ".join(seg)
 
 
