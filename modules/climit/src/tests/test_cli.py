@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -113,6 +114,15 @@ class TestCmdStatusline(unittest.TestCase):
         self.assertIn("5h", out.getvalue())
         self.assertIn("31%", out.getvalue())
 
+    def test_model_label(self):
+        strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
+        model = {"model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}}
+        self.assertEqual(strip(cli.model_label({**model, "effort": {"level": "xhigh"},
+                                                "thinking": {"enabled": True}})), "Opus 5.5 xhigh")
+        self.assertEqual(strip(cli.model_label({**model, "effort": {"level": "high"},
+                                                "thinking": {"enabled": False}})), "Opus 5.5 think off")
+        self.assertEqual(strip(cli.model_label(model)), "Opus 5.5")
+        self.assertIsNone(cli.model_label({}))
 
     def test_context_pct(self):
         self.assertEqual(cli.context_pct({"context_window": {"used_percentage": 42}}), 42.0)

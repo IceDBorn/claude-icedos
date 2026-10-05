@@ -200,8 +200,8 @@ def _statusline_segment(r, color) -> str:
     return " ".join(seg)
 
 
-# p10k theme colours (grey context/vcs, purple dir, cyan ahead/behind).
-GREY, PURPLE, CYAN = "38;5;242", "38;2;145;65;172", "38;2;33;144;164"
+# p10k theme colours (grey context/vcs, purple dir, cyan ahead/behind), plus Claude orange for the model.
+GREY, PURPLE, CYAN, ORANGE = "38;5;242", "38;2;145;65;172", "38;2;33;144;164", "38;2;217;119;87"
 
 
 def _git(cwd: str):
@@ -259,8 +259,21 @@ def context_pct(payload, compact_window: int | None = None) -> float | None:
     return 100.0 * used / min(limits) if limits else None
 
 
+def model_label(payload) -> str | None:
+    """Model name plus thinking level, e.g. "Opus 5.5 xhigh"; "think off" when thinking is disabled."""
+    model = payload.get("model") or {}
+    name = model.get("display_name") or model.get("id")
+    if not name:
+        return None
+    if (payload.get("thinking") or {}).get("enabled") is False:
+        level = "think off"
+    else:
+        level = (payload.get("effort") or {}).get("level")
+    return _c(ORANGE, name, True) + (" " + _c(GREY, level, True) if level else "")
+
+
 def render_prompt(payload, rlist, now_ms: int) -> str:
-    """Claude Code status line: user@host, dir, git state, context fill, tok/s; usage windows on a second line."""
+    """Claude Code status line: user@host, dir, git state, model, context fill, tok/s; usage windows on a second line."""
     payload = payload if isinstance(payload, dict) else {}
     cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
     home = str(config.HOME)
@@ -272,6 +285,8 @@ def render_prompt(payload, rlist, now_ms: int) -> str:
         branch, dirty, behind, ahead = git
         arrows = ("⇣" if behind else "") + ("⇡" if ahead else "")
         parts.append(_c(GREY, branch + ("*" if dirty else ""), True) + (_c(CYAN, arrows, True) if arrows else ""))
+    if model := model_label(payload):
+        parts.append(model)
     if (ctx := context_pct(payload, _auto_compact_window())) is not None:
         parts.append(_c(GREY, "ctx ", True) + _c(_util_code(ctx), f"{ctx:.0f}%", True))
     if rate := speed.render(payload.get("transcript_path")):
