@@ -1,11 +1,9 @@
 """Command-line interface: watch (default), status, statusline, poll, contrib."""
 import argparse
 import dataclasses
-import getpass
 import json as _json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -273,13 +271,12 @@ def model_label(payload) -> str | None:
 
 
 def render_prompt(payload, rlist, now_ms: int) -> str:
-    """Claude Code status line: user@host, dir, git state, model, context fill, tok/s; usage windows on a second line."""
+    """Claude Code status line: dir, git state, model, context fill, tok/s; usage windows on a second line."""
     payload = payload if isinstance(payload, dict) else {}
     cwd = (payload.get("workspace") or {}).get("current_dir") or payload.get("cwd") or os.getcwd()
     home = str(config.HOME)
     shown = "~" + cwd[len(home):] if cwd == home or cwd.startswith(home + "/") else cwd
-    host = socket.gethostname().split(".")[0]
-    parts = [_c(GREY, f"{getpass.getuser()}@{host}", True), _c(PURPLE, shown, True)]
+    parts = [_c(PURPLE, shown, True)]
     git = _git(cwd)
     if git:
         branch, dirty, behind, ahead = git
