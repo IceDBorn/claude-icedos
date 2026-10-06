@@ -3,6 +3,9 @@ import json
 import os
 from datetime import datetime
 
+# Average tok/s marker (nf-md-approximately_equal_box); the average is shown only when the last response strays this far from it.
+AVG_MARK, AVG_DELTA = "\U000F0F9F", 0.1
+
 # Transcripts grow to 10MB+; the status line only reads the tail, so "avg" covers recent responses.
 TAIL_BYTES = 1 << 20
 
@@ -38,8 +41,9 @@ def _tail_rows(path: str):
 def samples(rows):
     """(output_tokens, seconds) per finished assistant response, oldest first.
 
-    A response spans from the last non-assistant entry (prompt or tool result) to its final
-    streamed block, so time-to-first-token counts, as in prime-agent.
+    A response spans from the last user entry (prompt or tool result) to its final streamed
+    block, so time-to-first-token counts, as in prime-agent. Attachment and system rows are
+    written next to the response, not before it, so they never start a span.
     """
     out, start, cur = [], None, None
     for r in rows:
@@ -48,11 +52,14 @@ def samples(rows):
         ts = _ts(r.get("timestamp"))
         if ts is None:
             continue
-        if r.get("type") != "assistant":
+        kind = r.get("type")
+        if kind == "user":
             if cur:
                 out.append(cur)
                 cur = None
             start = ts
+            continue
+        if kind != "assistant":
             continue
         msg = r.get("message") or {}
         mid = msg.get("id")
@@ -82,14 +89,19 @@ def _fmt(rate: float) -> str:
 
 
 def render(transcript_path) -> str | None:
-    """`42.1 tok/s · avg 38.0`, or None when the transcript has no usable response."""
+    """`󰓅 42.1 · 󰾟 38.0` (nf-md-speedometer, then the average, shown only when the last response
+    strays more than AVG_DELTA from it), or None without a usable response."""
     if not transcript_path:
         return None
     s = samples(_tail_rows(transcript_path))
     if not s:
         return None
     tok, sec = s[-1]
-    last = _fmt(tok / sec) + " tok/s"
+    cur = tok / sec
+    last = "\U000F04C5 " + _fmt(cur)
     if len(s) == 1:
         return last
-    return f"{last} · avg {_fmt(sum(t for t, _ in s) / sum(d for _, d in s))}"
+    avg = sum(t for t, _ in s) / sum(d for _, d in s)
+    if abs(cur - avg) < AVG_DELTA * avg:
+        return last
+    return f"{last} · {AVG_MARK} {_fmt(avg)}"

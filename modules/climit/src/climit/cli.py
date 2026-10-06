@@ -2,7 +2,9 @@
 import argparse
 import dataclasses
 import json as _json
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -173,8 +175,22 @@ def render_table(rlist, now_ms: int) -> str:
     return "\n\n".join(blocks)
 
 
-# Nerd Font glyphs (nf-md-restore, nf-md-timer_sand): time to window reset, projected time to cap.
-RESET_GLYPH, ENDS_GLYPH = "\U000F099B ", "\U000F051F "
+# Nerd Font glyphs; all have ink wider than one cell so kitty (non-Mono font) spaces them alike.
+# nf-md-restore, nf-md-clock_alert_outline: time to window reset, projected time to cap.
+RESET_GLYPH, ENDS_GLYPH = "\U000F099B ", "\U000F05CE "
+# nf-md-folder, nf-md-git
+DIR_GLYPH, BRANCH_GLYPH = "\U000F024B ", "\U000F02A2 "
+# (glyph, colour): nf-md-network_strength_off / _1.._4, nf-md-lightning_bolt_circle; cool to hot as effort rises
+EFFORT_GLYPHS = {"off": ("\U000F08FC", "2"), "low": ("\U000F08F4", "32"), "medium": ("\U000F08F6", "33"),
+                 "high": ("\U000F08F8", "38;5;208"), "xhigh": ("\U000F08FA", "31"), "max": ("\U000F0820", "31;1")}
+SEP, RULE = " \u2502 ", "\u2500"
+# rule junction by (separator above, separator below)
+JOINTS = {(True, True): "\u253c", (True, False): "\u2534", (False, True): "\u252c", (False, False): RULE}
+
+
+def pie(pct: float) -> str:
+    """nf-md-circle_slice_1..8 filled in 12.5% steps."""
+    return chr(0xF0A9E + min(7, max(0, math.ceil(pct / 12.5) - 1)))
 
 
 def render_statusline(rlist, now_ms: int, color: bool | None = None) -> str:
@@ -187,14 +203,63 @@ def render_statusline(rlist, now_ms: int, color: bool | None = None) -> str:
         groups.append(_c("2", " · ", color).join(_statusline_segment(r, color) for r in rates))
         if reset_ts:
             groups[-1] += " " + _c("2", RESET_GLYPH + fmt_dur(reset_ts - now_ms), color)
-    return _c("2", " | ", color).join(groups)
+    return _c("2", SEP, color).join(groups)
 
 
-def _statusline_segment(r, color) -> str:
-    seg = [config.short_label(r.window)]
-    if r.will_exhaust_before_reset:
-        seg.insert(0, _c("31;1", "⚠", color))
-    seg.append(_c(f"{_util_code(r.util)};1", f"{r.util:.0f}%", color))
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _width(s: str) -> int:
+    return len(_ANSI.sub("", s))
+
+
+def _table(rows, color: bool | None = None) -> str:
+    """Bordered table with a rule between rows; a cell is a str, or (str, span) covering `span` columns.
+
+    Columns widen so a spanning cell fits, extra width shared evenly."""
+    rows = [[c if isinstance(c, tuple) else (c, 1) for c in row] for row in rows]
+    ncols = max(sum(span for _, span in row) for row in rows)
+    rows = [row + [("", ncols - n)] if (n := sum(span for _, span in row)) < ncols else row for row in rows]
+    widths = [0] * ncols
+    for row in rows:
+        col = 0
+        for text, span in row:
+            if span == 1:
+                widths[col] = max(widths[col], _width(text))
+            col += span
+    for row in rows:
+        col = 0
+        for text, span in row:
+            need = _width(text) - (sum(widths[col:col + span]) + 3 * (span - 1))
+            for k in range(span):
+                widths[col + k] += max(0, need // span + (k < need % span))
+            col += span
+
+    def rule(left, right, above, below):
+        segs = [RULE * (w + 2) for w in widths]
+        return _c("2", left + "".join(seg + JOINTS[(k in above, k in below)]
+                                       for k, seg in enumerate(segs, 1))[:-1] + right, color)
+
+    lines, prev = [], set()
+    for row in rows:
+        col, cells, joints = 0, [], set()
+        for text, span in row:
+            width = sum(widths[col:col + span]) + 3 * (span - 1)
+            cells.append(" " + text + " " * (width - _width(text)) + " ")
+            col += span
+            joints.add(col)
+        joints.discard(ncols)
+        lines.append(rule("\u250c", "\u2510", prev, joints) if not lines else rule("\u251c", "\u2524", prev, joints))
+        bar = _c("2", "\u2502", color)
+        lines.append(bar + bar.join(cells) + bar)
+        prev = joints
+    lines.append(rule("\u2514", "\u2518", prev, set()))
+    return "\n".join(lines)
+
+
+def _statusline_segment(r, color, label_width: int = 0) -> str:
+    # a red runway already marks a window that caps before reset, so no separate alert
+    seg = [config.short_label(r.window).rjust(label_width), _c(f"{_util_code(r.util)};1", f"{r.util:.0f}%", color)]
     if r.per_hour >= 0.05:
         seg.append(_c("2", f"{r.per_hour:.1f}/h", color))
     if (ms := runway_ms(r)) is not None:
@@ -262,46 +327,69 @@ def context_pct(payload, compact_window: int | None = None) -> float | None:
 
 
 def model_label(payload) -> str | None:
-    """Model name plus thinking level, e.g. "Opus 5.5 xhigh"; "think off" when thinking is disabled."""
+    """Thinking level glyph from EFFORT_GLYPHS, then the model name, e.g. "󰣺 Opus 5.5"."""
     model = payload.get("model") or {}
     name = model.get("display_name") or model.get("id")
     if not name:
         return None
     if (payload.get("thinking") or {}).get("enabled") is False:
-        level = "think off"
+        level = "off"
     else:
         level = (payload.get("effort") or {}).get("level")
-    return _c(ORANGE, name, True) + (" " + _c(GREY, level, True) if level else "")
+    name = _c(ORANGE, name, True)
+    if level in EFFORT_GLYPHS:
+        glyph, code = EFFORT_GLYPHS[level]
+        return _c(code, glyph, True) + " " + name
+    # an unknown level name stays as text after the name
+    return name + (" " + _c(GREY, level, True) if level else "")
 
 
 def _short_path(cwd: str, project: str | None) -> str:
-    """cwd relative to the session's project dir (named by its basename), else ~-shortened."""
+    """cwd relative to the session's project dir (named by its basename), else ~-shortened.
+
+    Deep paths keep the first and last two parts: `proj/…/climit/src`."""
     project = (project or "").rstrip("/")
-    if project and (cwd == project or cwd.startswith(project + "/")):
-        return os.path.basename(project) + cwd[len(project):]
     home = str(config.HOME)
-    return "~" + cwd[len(home):] if cwd == home or cwd.startswith(home + "/") else cwd
+    if project and (cwd == project or cwd.startswith(project + "/")):
+        path = os.path.basename(project) + cwd[len(project):]
+    elif cwd == home or cwd.startswith(home + "/"):
+        path = "~" + cwd[len(home):]
+    else:
+        path = cwd
+    parts = path.split("/")
+    return path if len(parts) <= 3 else "/".join([parts[0], "\u2026", *parts[-2:]])
 
 
 def render_prompt(payload, rlist, now_ms: int) -> str:
-    """Claude Code status line: dir, git state, model, context fill, tok/s; usage windows on a second line."""
+    """Claude Code status line: a title (dir, git, model, context, tok/s) over a bordered table with
+    one cell per usage window, then the resets, one per group of windows sharing one."""
     payload = payload if isinstance(payload, dict) else {}
     workspace = payload.get("workspace") or {}
     cwd = workspace.get("current_dir") or payload.get("cwd") or os.getcwd()
-    shown = _short_path(cwd, workspace.get("project_dir"))
-    parts = [_c(PURPLE, shown, True)]
-    git = _git(cwd)
-    if git:
+    where = _c(PURPLE, DIR_GLYPH + _short_path(cwd, workspace.get("project_dir")), True)
+    if git := _git(cwd):
         branch, dirty, behind, ahead = git
         arrows = ("⇣" if behind else "") + ("⇡" if ahead else "")
-        parts.append(_c(GREY, branch + ("*" if dirty else ""), True) + (_c(CYAN, arrows, True) if arrows else ""))
+        where += " " + _c(GREY, BRANCH_GLYPH + branch, True) + (_c("33", "*", True) if dirty else "") \
+            + (_c(CYAN, arrows, True) if arrows else "")
+    head = [where]
     if model := model_label(payload):
-        parts.append(model)
+        head.append(model)
     if (ctx := context_pct(payload, _auto_compact_window())) is not None:
-        parts.append(_c(GREY, "ctx ", True) + _c(_util_code(ctx), f"{ctx:.0f}%", True))
+        head.append(_c(_util_code(ctx), f"{pie(ctx)} {ctx:.0f}%", True))
     if rate := speed.render(payload.get("transcript_path")):
-        parts.append(_c(CYAN, rate, True))
-    return _c("2", " | ", True).join(parts) + "\n" + render_statusline(rlist, now_ms, color=True)
+        last, sep, avg = rate.partition(" · ")
+        head.append(_c(CYAN, last, True) + (_c("2", sep, True) + _c(GREY, avg, True) if avg else ""))
+    active = shown(rlist)
+    label_width = max((len(config.short_label(r.window)) for r in active), default=0)
+    usage, resets = [], []
+    for reset_ts, rates in group_by_reset(active):
+        usage += [_statusline_segment(r, True, label_width) for r in rates]
+        resets.append((_c("2", RESET_GLYPH + fmt_dur(reset_ts - now_ms), True) if reset_ts else "", len(rates)))
+    rows = [usage or ["climit: no usage"]]
+    if any(text for text, _ in resets):
+        rows.append(resets)
+    return "  ".join(head) + "\n" + _table(rows, color=True)
 
 
 def cross_metric(rlist):

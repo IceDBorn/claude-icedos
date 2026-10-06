@@ -118,10 +118,14 @@ class TestCmdStatusline(unittest.TestCase):
         strip = lambda s: re.sub(r"\x1b\[[0-9;]*m", "", s)
         model = {"model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}}
         self.assertEqual(strip(cli.model_label({**model, "effort": {"level": "xhigh"},
-                                                "thinking": {"enabled": True}})), "Opus 5.5 xhigh")
+                                                "thinking": {"enabled": True}})), "󰣺 Opus 5.5")
         self.assertEqual(strip(cli.model_label({**model, "effort": {"level": "high"},
-                                                "thinking": {"enabled": False}})), "Opus 5.5 think off")
+                                                "thinking": {"enabled": False}})), "󰣼 Opus 5.5")
+        self.assertEqual(strip(cli.model_label({**model, "effort": {"level": "max"}})),
+                         "󰠠 Opus 5.5")
         self.assertEqual(strip(cli.model_label(model)), "Opus 5.5")
+        self.assertEqual(strip(cli.model_label({**model, "effort": {"level": "medium"}})),
+                         "󰣶 Opus 5.5")
         self.assertIsNone(cli.model_label({}))
 
     def test_context_pct(self):
@@ -151,7 +155,7 @@ class TestRenderStatusline(unittest.TestCase):
 
     def test_shows_ends_and_resets(self):
         line = cli.render_statusline([self._rate()], 0, color=False)
-        self.assertEqual(line, "⚠ 5h 40% 30.0/h 󰔟 2h0m 󰦛 3h0m")
+        self.assertEqual(line, "5h 40% 30.0/h 󰗎 2h0m 󰦛 3h0m")
 
     def test_idle_window_omits_rate_and_ends(self):
         r = self._rate(per_min=0.0, per_hour=0.0, runway_min=None, will_exhaust_before_reset=False)
@@ -171,21 +175,46 @@ class TestRenderStatusline(unittest.TestCase):
         self.assertEqual([[r.window for r in rs] for _, rs in groups],
                          [["five_hour"], ["seven_day", SCOPED_FABLE]])
         line = cli.render_statusline([c, a, b], 0, color=False)
-        self.assertTrue(line.startswith("5h 40% 󰦛 1h0m | "))
+        self.assertTrue(line.startswith("5h 40% 󰦛 1h0m │ "))
         self.assertTrue(line.endswith("󰦛 3h0m"))
 
     def test_at_cap_window_omits_zero_ends(self):
-        # 100% used leaves no runway; "󰔟 0s" is noise on every surface.
+        # 100% used leaves no runway; "󰗎 0s" is noise on every surface.
         at_cap = self._rate(util=100.0, runway_min=0.0)
         self.assertEqual(cli.render_statusline([at_cap], 0, color=False),
-                         "⚠ 5h 100% 30.0/h 󰦛 3h0m")
+                         "5h 100% 30.0/h 󰦛 3h0m")
         self.assertIn("—", cli.render_table([at_cap], 0))
         self.assertNotIn("0s", cli.render_table([at_cap], 0))
 
     def test_sub_second_runway_treated_as_zero(self):
         r = self._rate(runway_min=0.001)  # 60ms, would format as "0s"
         self.assertEqual(cli.render_statusline([r], 0, color=False),
-                         "⚠ 5h 40% 30.0/h 󰦛 3h0m")
+                         "5h 40% 30.0/h 󰦛 3h0m")
+
+    def test_table_borders_spans_and_rules(self):
+        rows = [[("head", 3)], ["ab", cli._c("31", "c", True), "d"], [("e", 2), "f"]]
+        self.assertEqual(cli._table(rows, color=False).split("\n"), [
+            "┌────────────┐",
+            "│ head       │",
+            "├────┬───┬───┤",
+            "│ ab │ \x1b[31mc\x1b[0m │ d │",
+            "├────┴───┼───┤",
+            "│ e      │ f │",
+            "└────────┴───┘",
+        ])
+
+    def test_table_widens_columns_under_a_long_span(self):
+        self.assertEqual(cli._table([[("abcdefghij", 2)], ["a", "b"]], color=False).split("\n"), [
+            "┌────────────┐",
+            "│ abcdefghij │",
+            "├──────┬─────┤",
+            "│ a    │ b   │",
+            "└──────┴─────┘",
+        ])
+
+    def test_label_width_pads_short_labels(self):
+        r = self._rate(per_hour=0.0, runway_min=None, will_exhaust_before_reset=False)
+        self.assertEqual(cli._statusline_segment(r, False, 3), " 5h 40%")
 
     def test_zero_util_window_hidden(self):
         zero = self._rate(window="seven_day", util=0.0, per_min=0.0, per_hour=0.0,
@@ -206,6 +235,10 @@ class TestShortPath(unittest.TestCase):
     def test_relative_to_project(self):
         self.assertEqual(cli._short_path("/a/proj", "/a/proj"), "proj")
         self.assertEqual(cli._short_path("/a/proj/x/y", "/a/proj/"), "proj/x/y")
+
+    def test_deep_path_keeps_ends(self):
+        self.assertEqual(cli._short_path("/a/proj/b/c/d/e", "/a/proj"), "proj/…/d/e")
+        self.assertEqual(cli._short_path(str(cli.config.HOME) + "/w/x/y", None), "~/…/x/y")
 
     def test_outside_project_falls_back(self):
         self.assertEqual(cli._short_path("/a/projx", "/a/proj"), "/a/projx")
