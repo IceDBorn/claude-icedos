@@ -42,6 +42,13 @@ class TestRates(unittest.TestCase):
         r = compute_ok("w", rows, 60 * MIN, lookback_min=60)
         self.assertAlmostEqual(r.per_hour, 20.0, places=3)
 
+    def test_idle_window_rate_decays_instead_of_dropping(self):
+        # one 1% step at t=10min, nothing since: 1%/h while inside the lookback, then 1% over the elapsed time
+        rows = [(0, 50.0, None), (10 * MIN, 51.0, None)]
+        self.assertAlmostEqual(compute_ok("w", rows, 60 * MIN, lookback_min=60).per_hour, 1.0)
+        self.assertAlmostEqual(compute_ok("w", rows, 120 * MIN, lookback_min=60).per_hour, 0.5)
+        self.assertAlmostEqual(compute_ok("w", rows, 240 * MIN, lookback_min=60).per_hour, 0.25)
+
     def test_reset_never_negative(self):
         # util drops 90 -> 5 with a resets_at change: boundary moves, rate stays >= 0
         rows = [(0, 80.0, "A"), (60 * MIN, 90.0, "A"), (120 * MIN, 5.0, "B"), (130 * MIN, 7.0, "B")]

@@ -1,9 +1,11 @@
 """Reset-aware burn-rate math over the stored sample series.
 
 Rate is a windowed average: (peak_now - peak_at(t_start)) / elapsed, where
-t_start = max(now - lookback, start of the current window). Usage inside a window
-rarely goes down, so the running peak absorbs sources that round differently
-(the endpoint can say 75 while the status line says 74).
+t_start = max(now - lookback, start of the current window). Once the last rise
+ages out of the lookback, t_start moves back to the sample before that rise, so
+an idle window's rate decays as 1/t instead of dropping to zero. Usage inside a
+window rarely goes down, so the running peak absorbs sources that round
+differently (the endpoint can say 75 while the status line says 74).
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -108,7 +110,10 @@ def compute(window, rows, now_ms, lookback_min=60, stale_after_min=30):
         return Rate(window, 0.0, None, 0.0, 0.0, 0.0, 0.0, None, None, None, False, stale, latest_ts)
 
     util_now = max(row[1] for row in win)
-    t_start = max(now_ms - lookback_min * 60_000, win[0][0])
+    # the sample before the window first hit its peak; usage is whole percents, so a rise is a step
+    first_peak = next(i for i, row in enumerate(win) if row[1] == util_now)
+    t_prev = win[first_peak - 1][0] if first_peak else win[0][0]
+    t_start = max(min(now_ms - lookback_min * 60_000, t_prev), win[0][0])
     util_start = max((row[1] for row in win if row[0] <= t_start), default=win[0][1])
     span_min = max((now_ms - t_start) / 60_000, 1e-9)
     per_min = max((util_now - util_start) / span_min, 0.0)
