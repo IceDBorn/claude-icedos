@@ -269,12 +269,26 @@ in
                 value = buildPlugin marketplaces id;
               }) ids
             );
+
+          hasZed = icedosLib.hasModule {
+            inherit config;
+            name = "zed";
+          };
         in
         {
           # Rule 1 (core/AGENTS.md): fill every normal user so the nested
           # climit/reviewMcp submodules get their field defaults.
-          icedos.applications.claude-code.users = icedosLib.users.genDefaults {
-            inherit (config.icedos) users;
+          icedos.applications = {
+            claude-code.users = icedosLib.users.genDefaults {
+              inherit (config.icedos) users;
+            };
+          }
+          // lib.optionalAttrs hasZed {
+            zed.agentBridge.agents.claude = {
+              command = lib.mkDefault [ "claude" ];
+              resumeArgs = lib.mkDefault [ "--resume" "{id}" ];
+              locator = lib.mkDefault "claude";
+            };
           };
 
           # `icedos gc` prunes stale claude session data per user (unshade-style).
