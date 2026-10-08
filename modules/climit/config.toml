@@ -7,5 +7,6 @@ alertUrgency = "normal"
 alertTimeout = 10
 alertTransient = false
 
-# Zed keybind to spawn the climit dashboard (Ctrl-Alt-L default).
-keybind = "ctrl-alt-l"
+# Zed keybind to spawn the climit dashboard (ctrl-alt-v; ctrl-alt-l collides
+# with Zed default lsp_tool::ToggleMenu + KDE lock).
+keybind = "ctrl-alt-v"

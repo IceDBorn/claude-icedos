@@ -60,7 +60,7 @@
         # Popup only — skip the notification history.
         alertTransient = mkBoolOption { default = alertTransient; };
 
-        # Zed keybind to spawn the climit dashboard (Ctrl-Alt-L default).
+        # Zed keybind to spawn the climit dashboard (ctrl-alt-v).
         keybind = mkStrOption { default = keybind; };
       };
     };
@@ -218,7 +218,7 @@
                   }
                 ];
 
-                # `ctrl-alt-l` (limits) spawns the climit dashboard from anywhere.
+                # `ctrl-alt-v` (limits) spawns the climit dashboard from anywhere.
                 programs.zed-editor.userKeymaps = lib.mkIf (config.programs.zed-editor.enable or false) [
                   {
                     context = "Workspace";
